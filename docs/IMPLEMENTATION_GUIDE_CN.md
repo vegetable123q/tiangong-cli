@@ -30,19 +30,25 @@ tiangong
     flow
     process
     lifecyclemodel
+  publish
+    run
+  validation
+    run
   admin
     embedding-run
 ```
 
 对应关系：
 
-| CLI 命令                         | 当前后端能力                                 |
-| -------------------------------- | -------------------------------------------- |
-| `tiangong doctor`                | 本地环境诊断、`.env` 加载、统一 env 合同检查 |
-| `tiangong search flow`           | `flow_hybrid_search`                         |
-| `tiangong search process`        | `process_hybrid_search`                      |
-| `tiangong search lifecyclemodel` | `lifecyclemodel_hybrid_search`               |
-| `tiangong admin embedding-run`   | `embedding_ft`                               |
+| CLI 命令                         | 当前后端能力                                         |
+| -------------------------------- | ---------------------------------------------------- |
+| `tiangong doctor`                | 本地环境诊断、`.env` 加载、统一 env 合同检查         |
+| `tiangong search flow`           | `flow_hybrid_search`                                 |
+| `tiangong search process`        | `process_hybrid_search`                              |
+| `tiangong search lifecyclemodel` | `lifecyclemodel_hybrid_search`                       |
+| `tiangong publish run`           | 本地 publish 契约归一化、dry-run/commit、report 输出 |
+| `tiangong validation run`        | 本地 `tidas-sdk` / `tidas-tools` 校验收口            |
+| `tiangong admin embedding-run`   | `embedding_ft`                                       |
 
 ### 2.2 已经固定的工程约束
 
@@ -129,10 +135,38 @@ tiangong admin embedding-run
 
 ```bash
 tiangong search flow --input ./request.json --json
+tiangong publish run --input ./publish-request.json --dry-run
+tiangong validation run --input-dir ./tidas-package --engine auto
 tiangong admin embedding-run --input ./jobs.json --dry-run
 ```
 
 而不是长自然语言参数和不稳定的 shell 拼接。
+
+### 4.4 publish 和 validation 的当前边界
+
+`publish run` 现在固定的是“稳定 publish 契约层”，不是历史 MCP 写库脚本的 TypeScript 复刻。
+
+它负责：
+
+- 吞入 `publish-bundle.json` 和直接数组输入
+- 统一 `dry-run` / `commit` override
+- 识别 canonical process payload 与 projection payload
+- 产出结构化 `publish-report.json`
+- 把真正的 commit 执行动作留给显式 executor
+
+这样做的好处是：
+
+- CLI 先稳定输入/输出合同
+- 不把旧 MCP transport 重新带回命令树
+- 后续真有直连 REST publish executor 时，只需要接到同一模块，不需要再改调用方契约
+
+`validation run` 则固定“统一校验报告层”：
+
+- `auto` 模式优先走 `tidas-sdk`
+- 找不到本地 parity validator 时，回退到 `tidas-tools`
+- `all` 模式会给出两个引擎结果和 comparison
+
+这保证后续 workflow 只依赖 `tiangong validation run`，而不需要在 skill 里自己判断到底调哪个校验器。
 
 ## 5. 环境变量策略
 
@@ -153,6 +187,7 @@ TIANGONG_LCA_REGION=us-east-1
 - 只为当前已实现的命令暴露 env
 - 不为了历史实现或未来猜测保留 alias
 - 某类能力如果还停留在 skills / Python workflow 层，就继续由那一层自己管理 env
+- `publish run` / `validation run` 都是本地契约与执行收口，不新增远程 env
 - 因此当前不预放 `TIANGONG_KB_*`、`TIANGONG_MINERU_*`、`OPENAI_*` 或 `TIANGONG_LCA_REMOTE_*`
 
 ## 6. 质量门

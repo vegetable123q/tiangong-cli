@@ -17,6 +17,8 @@ Current implementation choices:
 - `tiangong search flow`
 - `tiangong search process`
 - `tiangong search lifecyclemodel`
+- `tiangong publish run`
+- `tiangong validation run`
 - `tiangong admin embedding-run`
 
 The stable launcher is `bin/tiangong.js`. It loads the compiled runtime at `dist/src/main.js`, while `npm start -- ...` rebuilds and dogfoods the same launcher path.
@@ -71,8 +73,16 @@ npm start -- --help
 npm start -- doctor
 npm start -- doctor --json
 npm start -- search flow --input ./request.json --dry-run
+npm start -- publish run --input ./publish-request.json --dry-run
+npm start -- validation run --input-dir ./tidas-package --engine auto
 npm start -- admin embedding-run --input ./jobs.json --dry-run
 ```
+
+## Publish and validation
+
+`tiangong publish run` is the CLI-side publish contract boundary. It normalizes publish requests, ingests upstream `publish-bundle.json` inputs, writes `normalized-request.json`, `collected-inputs.json`, `relation-manifest.json`, and `publish-report.json`, and keeps commit-mode execution behind explicit executors instead of reintroducing MCP-specific logic into the CLI.
+
+`tiangong validation run` is the CLI-side validation boundary. It standardizes local TIDAS package validation through one JSON report shape, supports `--engine auto|sdk|tools|all`, prefers `tidas-sdk` parity validation when available, and falls back to `uv run tidas-validate --format json` when needed.
 
 Run the built artifact directly:
 
@@ -93,3 +103,4 @@ node ./dist/src/main.js doctor --json
 
 - Chinese setup guide: [DEV_CN.md](./DEV_CN.md)
 - Detailed implementation guide: [docs/IMPLEMENTATION_GUIDE_CN.md](./docs/IMPLEMENTATION_GUIDE_CN.md)
+- Skills migration checklist: [docs/SKILLS_TO_CLI_MIGRATION_CHECKLIST_CN.md](./docs/SKILLS_TO_CLI_MIGRATION_CHECKLIST_CN.md)

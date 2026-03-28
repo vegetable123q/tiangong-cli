@@ -115,6 +115,26 @@ test('executeCli returns remote help for admin embedding-run', async () => {
   assert.match(result.stdout, /tiangong admin embedding-run/u);
 });
 
+test('executeCli returns help for publish and validation namespaces', async () => {
+  const publishHelp = await executeCli(['publish', '--help'], makeDeps());
+  assert.equal(publishHelp.exitCode, 0);
+  assert.match(publishHelp.stdout, /tiangong publish run/u);
+
+  const validationHelp = await executeCli(['validation', '--help'], makeDeps());
+  assert.equal(validationHelp.exitCode, 0);
+  assert.match(validationHelp.stdout, /tiangong validation run/u);
+});
+
+test('executeCli returns help for publish and validation subcommands', async () => {
+  const publishHelp = await executeCli(['publish', 'run', '--help'], makeDeps());
+  assert.equal(publishHelp.exitCode, 0);
+  assert.match(publishHelp.stdout, /--out-dir/u);
+
+  const validationHelp = await executeCli(['validation', 'run', '--help'], makeDeps());
+  assert.equal(validationHelp.exitCode, 0);
+  assert.match(validationHelp.stdout, /--report-file/u);
+});
+
 test('executeCli returns group help for search and admin namespaces', async () => {
   const searchHelp = await executeCli(['search', '--help'], makeDeps());
   assert.equal(searchHelp.exitCode, 0);
@@ -300,6 +320,221 @@ test('executeCli returns unexpected error payloads from remote execution failure
     assert.equal(result.exitCode, 1);
     assert.equal(result.stdout, '');
     assert.match(result.stderr, /UNEXPECTED_ERROR/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('executeCli executes publish run with mode overrides and compact JSON output', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-publish-cli-'));
+  const inputPath = path.join(dir, 'request.json');
+  writeFileSync(inputPath, '{"publish":{"commit":false}}', 'utf8');
+
+  try {
+    const result = await executeCli(
+      ['publish', 'run', '--json', '--commit', '--input', inputPath, '--out-dir', './out'],
+      {
+        ...makeDeps(),
+        runPublishImpl: async (options) => {
+          assert.equal(options.inputPath, inputPath);
+          assert.equal(options.outDir, './out');
+          assert.equal(options.commit, true);
+          return {
+            generated_at_utc: '2026-03-28T00:00:00.000Z',
+            request_path: inputPath,
+            out_dir: path.join(dir, 'out'),
+            commit: true,
+            status: 'completed',
+            counts: {
+              bundle_paths: 0,
+              lifecyclemodels: 0,
+              processes: 0,
+              sources: 0,
+              relations: 0,
+              process_build_runs: 0,
+              executed: 0,
+              deferred: 0,
+              failed: 0,
+            },
+            files: {
+              normalized_request: path.join(dir, 'out', 'normalized-request.json'),
+              collected_inputs: path.join(dir, 'out', 'collected-inputs.json'),
+              relation_manifest: path.join(dir, 'out', 'relation-manifest.json'),
+              publish_report: path.join(dir, 'out', 'publish-report.json'),
+            },
+            lifecyclemodels: [],
+            processes: [],
+            sources: [],
+            process_build_runs: [],
+            relations: {
+              generated_at_utc: '2026-03-28T00:00:00.000Z',
+              relation_mode: 'local_manifest_only',
+              status: 'prepared_local_relation_manifest',
+              relations: [],
+            },
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout.includes('\n'), true);
+    assert.match(result.stdout, /"commit":true/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('executeCli maps publish dry-run override and completed_with_failures exit code', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-publish-cli-failure-'));
+  const inputPath = path.join(dir, 'request.json');
+  writeFileSync(inputPath, '{"publish":{"commit":true}}', 'utf8');
+
+  try {
+    const result = await executeCli(['publish', 'run', '--dry-run', '--input', inputPath], {
+      ...makeDeps(),
+      runPublishImpl: async (options) => {
+        assert.equal(options.commit, false);
+        return {
+          generated_at_utc: '2026-03-28T00:00:00.000Z',
+          request_path: inputPath,
+          out_dir: path.join(dir, 'out'),
+          commit: false,
+          status: 'completed_with_failures',
+          counts: {
+            bundle_paths: 0,
+            lifecyclemodels: 0,
+            processes: 0,
+            sources: 0,
+            relations: 0,
+            process_build_runs: 0,
+            executed: 0,
+            deferred: 0,
+            failed: 1,
+          },
+          files: {
+            normalized_request: path.join(dir, 'out', 'normalized-request.json'),
+            collected_inputs: path.join(dir, 'out', 'collected-inputs.json'),
+            relation_manifest: path.join(dir, 'out', 'relation-manifest.json'),
+            publish_report: path.join(dir, 'out', 'publish-report.json'),
+          },
+          lifecyclemodels: [],
+          processes: [],
+          sources: [],
+          process_build_runs: [],
+          relations: {
+            generated_at_utc: '2026-03-28T00:00:00.000Z',
+            relation_mode: 'local_manifest_only',
+            status: 'prepared_local_relation_manifest',
+            relations: [],
+          },
+        };
+      },
+    });
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stdout, /completed_with_failures/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('executeCli rejects conflicting publish mode flags', async () => {
+  const result = await executeCli(
+    ['publish', 'run', '--input', './request.json', '--commit', '--dry-run'],
+    makeDeps(),
+  );
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /INVALID_PUBLISH_MODE/u);
+});
+
+test('executeCli returns parsing errors for invalid publish and validation flags', async () => {
+  const publishResult = await executeCli(['publish', 'run', '--bad-flag'], makeDeps());
+  assert.equal(publishResult.exitCode, 2);
+  assert.match(publishResult.stderr, /INVALID_ARGS/u);
+
+  const validationResult = await executeCli(['validation', 'run', '--bad-flag'], makeDeps());
+  assert.equal(validationResult.exitCode, 2);
+  assert.match(validationResult.stderr, /INVALID_ARGS/u);
+});
+
+test('executeCli executes validation run with injected implementation and report file', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-validation-cli-'));
+
+  try {
+    const result = await executeCli(
+      [
+        'validation',
+        'run',
+        '--json',
+        '--input-dir',
+        dir,
+        '--engine',
+        'all',
+        '--report-file',
+        './validation-report.json',
+      ],
+      {
+        ...makeDeps(),
+        runValidationImpl: async (options) => {
+          assert.equal(options.inputDir, dir);
+          assert.equal(options.engine, 'all');
+          assert.equal(options.reportFile, './validation-report.json');
+          return {
+            input_dir: dir,
+            mode: 'all',
+            ok: false,
+            summary: {
+              engine_count: 2,
+              ok_count: 0,
+              failed_count: 2,
+            },
+            files: {
+              report: path.join(dir, 'validation-report.json'),
+            },
+            reports: [],
+            comparison: {
+              equivalent: false,
+              differences: ['summary'],
+            },
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stdout, /"mode":"all"/u);
+    assert.match(result.stdout, /"comparison"/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('executeCli returns success for validation reports that are ok', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-validation-cli-ok-'));
+
+  try {
+    const result = await executeCli(['validation', 'run', '--input-dir', dir], {
+      ...makeDeps(),
+      runValidationImpl: async () => ({
+        input_dir: dir,
+        mode: 'auto',
+        ok: true,
+        summary: {
+          engine_count: 1,
+          ok_count: 1,
+          failed_count: 0,
+        },
+        files: {
+          report: null,
+        },
+        reports: [],
+        comparison: null,
+      }),
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /"ok": true/u);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
