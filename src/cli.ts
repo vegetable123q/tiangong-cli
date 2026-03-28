@@ -3,12 +3,21 @@ import { buildDoctorReport, readRuntimeEnv } from './lib/env.js';
 import type { DotEnvLoadResult } from './lib/dotenv.js';
 import { CliError, toErrorPayload } from './lib/errors.js';
 import type { FetchLike } from './lib/http.js';
+import { stringifyJson } from './lib/io.js';
+import { runPublish, type PublishReport, type RunPublishOptions } from './lib/publish.js';
 import { executeRemoteCommand, getRemoteCommandHelp } from './lib/remote.js';
+import {
+  runValidation,
+  type RunValidationOptions,
+  type ValidationRunReport,
+} from './lib/validation.js';
 
 export type CliDeps = {
   env: NodeJS.ProcessEnv;
   dotEnvStatus: DotEnvLoadResult;
   fetchImpl: FetchLike;
+  runPublishImpl?: (options: RunPublishOptions) => Promise<PublishReport>;
+  runValidationImpl?: (options: RunValidationOptions) => Promise<ValidationRunReport>;
 };
 
 export type CliResult = {
@@ -39,6 +48,8 @@ Usage:
 Commands:
   auth       whoami | doctor-auth
   search     flow | process | lifecyclemodel
+  publish    run
+  validation run
   review     flow | process
   flow       get | list | remediate | publish-version | regen-product
   process    get | auto-build | resume-build | publish-build | batch-build
@@ -50,6 +61,8 @@ Examples:
   tiangong doctor
   tiangong search flow --input ./request.json
   tiangong search process --input ./request.json --dry-run
+  tiangong publish run --input ./publish-request.json --dry-run
+  tiangong validation run --input-dir ./package --engine auto
   tiangong admin embedding-run --input ./jobs.json
 
 Environment:
@@ -94,6 +107,33 @@ Options:
   --api-key <key>  Override TIANGONG_LCA_API_KEY
   --base-url <url> Override TIANGONG_LCA_API_BASE_URL
   --timeout-ms <n> Request timeout in milliseconds
+  -h, --help
+`.trim();
+}
+
+function renderPublishHelp(): string {
+  return `Usage:
+  tiangong publish run --input <file> [options]
+
+Options:
+  --input <file>       JSON publish request file
+  --out-dir <dir>      Override request out_dir
+  --commit             Force publish.commit=true
+  --dry-run            Force publish.commit=false
+  --json               Print compact JSON
+  -h, --help
+`.trim();
+}
+
+function renderValidationHelp(): string {
+  return `Usage:
+  tiangong validation run --input-dir <dir> [options]
+
+Options:
+  --input-dir <dir>    TIDAS package directory
+  --engine <mode>      auto | sdk | tools | all (default: auto)
+  --report-file <file> Write the structured validation report to a file
+  --json               Print compact JSON
   -h, --help
 `.trim();
 }
@@ -266,6 +306,88 @@ function parseRemoteFlags(args: string[]): {
   };
 }
 
+function parsePublishFlags(args: string[]): {
+  help: boolean;
+  json: boolean;
+  inputPath: string;
+  outDir: string | null;
+  commitOverride: boolean | null;
+} {
+  let values: ReturnType<typeof parseArgs>['values'];
+  try {
+    ({ values } = parseArgs({
+      args,
+      allowPositionals: false,
+      strict: true,
+      options: {
+        help: { type: 'boolean', short: 'h' },
+        json: { type: 'boolean' },
+        input: { type: 'string' },
+        'out-dir': { type: 'string' },
+        commit: { type: 'boolean' },
+        'dry-run': { type: 'boolean' },
+      },
+    }));
+  } catch (error) {
+    throw new CliError(String(error), {
+      code: 'INVALID_ARGS',
+      exitCode: 2,
+    });
+  }
+
+  if (values.commit && values['dry-run']) {
+    throw new CliError('Cannot pass both --commit and --dry-run.', {
+      code: 'INVALID_PUBLISH_MODE',
+      exitCode: 2,
+    });
+  }
+
+  return {
+    help: Boolean(values.help),
+    json: Boolean(values.json),
+    inputPath: typeof values.input === 'string' ? values.input : '',
+    outDir: typeof values['out-dir'] === 'string' ? values['out-dir'] : null,
+    commitOverride: values.commit ? true : values['dry-run'] ? false : null,
+  };
+}
+
+function parseValidationFlags(args: string[]): {
+  help: boolean;
+  json: boolean;
+  inputDir: string;
+  engine: string | undefined;
+  reportFile: string | null;
+} {
+  let values: ReturnType<typeof parseArgs>['values'];
+  try {
+    ({ values } = parseArgs({
+      args,
+      allowPositionals: false,
+      strict: true,
+      options: {
+        help: { type: 'boolean', short: 'h' },
+        json: { type: 'boolean' },
+        'input-dir': { type: 'string' },
+        engine: { type: 'string' },
+        'report-file': { type: 'string' },
+      },
+    }));
+  } catch (error) {
+    throw new CliError(String(error), {
+      code: 'INVALID_ARGS',
+      exitCode: 2,
+    });
+  }
+
+  return {
+    help: Boolean(values.help),
+    json: Boolean(values.json),
+    inputDir: typeof values['input-dir'] === 'string' ? values['input-dir'] : '',
+    engine: typeof values.engine === 'string' ? values.engine : undefined,
+    reportFile: typeof values['report-file'] === 'string' ? values['report-file'] : null,
+  };
+}
+
 function plannedCommand(command: string, subcommand?: string): CliResult {
   const suffix = subcommand ? ` ${subcommand}` : '';
   return {
@@ -291,6 +413,8 @@ function resolveRemoteRuntime(
 export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResult> {
   try {
     const { flags, command, subcommand, commandArgs } = parseCommandLine(argv);
+    const publishImpl = deps.runPublishImpl ?? runPublish;
+    const validationImpl = deps.runValidationImpl ?? runValidation;
 
     if (flags.version) {
       return { exitCode: 0, stdout: '0.0.1\n', stderr: '' };
@@ -370,6 +494,52 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
           compactJson: remoteFlags.json,
           fetchImpl: deps.fetchImpl,
         }),
+        stderr: '',
+      };
+    }
+
+    if (command === 'publish' && !subcommand && commandArgs.includes('--help')) {
+      return { exitCode: 0, stdout: `${renderPublishHelp()}\n`, stderr: '' };
+    }
+
+    if (command === 'publish' && subcommand === 'run') {
+      const publishFlags = parsePublishFlags(commandArgs);
+      if (publishFlags.help) {
+        return { exitCode: 0, stdout: `${renderPublishHelp()}\n`, stderr: '' };
+      }
+
+      const report = await publishImpl({
+        inputPath: publishFlags.inputPath,
+        outDir: publishFlags.outDir,
+        commit: publishFlags.commitOverride,
+      });
+
+      return {
+        exitCode: report.status === 'completed_with_failures' ? 1 : 0,
+        stdout: stringifyJson(report, publishFlags.json),
+        stderr: '',
+      };
+    }
+
+    if (command === 'validation' && !subcommand && commandArgs.includes('--help')) {
+      return { exitCode: 0, stdout: `${renderValidationHelp()}\n`, stderr: '' };
+    }
+
+    if (command === 'validation' && subcommand === 'run') {
+      const validationFlags = parseValidationFlags(commandArgs);
+      if (validationFlags.help) {
+        return { exitCode: 0, stdout: `${renderValidationHelp()}\n`, stderr: '' };
+      }
+
+      const report = await validationImpl({
+        inputDir: validationFlags.inputDir,
+        engine: validationFlags.engine,
+        reportFile: validationFlags.reportFile,
+      });
+
+      return {
+        exitCode: report.ok ? 0 : 1,
+        stdout: stringifyJson(report, validationFlags.json),
         stderr: '',
       };
     }

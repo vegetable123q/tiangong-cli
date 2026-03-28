@@ -15,6 +15,8 @@
 - `tiangong search flow`
 - `tiangong search process`
 - `tiangong search lifecyclemodel`
+- `tiangong publish run`
+- `tiangong validation run`
 - `tiangong admin embedding-run`
 
 ## 安装依赖
@@ -56,6 +58,7 @@ TIANGONG_LCA_REGION=us-east-1
 原因很直接：
 
 - 当前 CLI 已实现命令只直连 TianGong LCA 的 REST / Edge Functions
+- `publish run` / `validation run` 只做本地契约和执行收口，不新增远程 env
 - 知识库、OCR、LLM、远程 MCP 连接目前仍属于 `tiangong-lca-skills` 或 Python workflow 层
 - 若未来 CLI 真正落地对应子命令，再按命令面新增 env，而不是提前暴露一整组无实际消费者的配置
 
@@ -66,8 +69,33 @@ npm start -- --help
 npm start -- doctor
 npm start -- doctor --json
 npm start -- search flow --input ./request.json --dry-run
+npm start -- publish run --input ./publish-request.json --dry-run
+npm start -- validation run --input-dir ./tidas-package --engine auto
 npm start -- admin embedding-run --input ./jobs.json --dry-run
 ```
+
+## publish / validation 边界
+
+`tiangong publish run` 现在已经成为统一 publish 契约入口，负责：
+
+- 读取 publish request
+- 归一化 `bundle_paths` / 直接数组输入
+- 统一 `dry-run` / `commit` 语义
+- 输出 `normalized-request.json`
+- 输出 `collected-inputs.json`
+- 输出 `relation-manifest.json`
+- 输出 `publish-report.json`
+
+当前实现刻意没有把旧 MCP 数据库写入逻辑重新塞回 CLI；commit 模式通过可插拔执行器承接，CLI 先把稳定的输入/输出契约和报告形状固定下来。
+
+`tiangong validation run` 负责把本地 TIDAS 包校验统一收口到 CLI：
+
+- `--engine auto`：优先使用本地 `tidas-sdk` parity validator，找不到时回退到 `uv run tidas-validate --format json`
+- `--engine sdk`：只跑 `tidas-sdk`
+- `--engine tools`：只跑 `tidas-tools`
+- `--engine all`：两边都跑，并给出结构化 comparison
+
+这两个命令都不需要新增 `TIANGONG_LCA_*` 之外的环境变量。
 
 ## 开发模式
 

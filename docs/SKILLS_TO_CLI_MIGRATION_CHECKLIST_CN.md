@@ -69,7 +69,7 @@
 | `process-hybrid-search` | 已有等价 CLI | shell wrapper，历史 token/env 兼容 | 只保留 skill 文档，调用 `tiangong search process` | P0 |
 | `lifecyclemodel-hybrid-search` | 已有等价 CLI | shell wrapper，历史 token/env 兼容 | 只保留 skill 文档，调用 `tiangong search lifecyclemodel` | P0 |
 | `embedding-ft` | 已有等价 CLI | shell wrapper | 只保留 skill 文档，调用 `tiangong admin embedding-run` | P0 |
-| `process-automated-builder` | 仍是重 workflow | shell + Python + LangGraph + MCP + OpenAI + KB + MinerU | 迁成 `tiangong process ...` 主链 | P1 |
+| `process-automated-builder` | 仍是重 workflow | shell + Python + LangGraph + MCP + OpenAI + AI edge search + TianGong unstructured | 迁成 `tiangong process ...` 主链 | P1 |
 | `lifecyclemodel-automated-builder` | 仍是重 workflow | shell + Python + MCP + OpenAI | 迁成 `tiangong lifecyclemodel ...` 主链 | P1 |
 | `lifecyclemodel-resulting-process-builder` | 仍是重 workflow | Python builder + 可选 MCP lookup | 迁成 `tiangong lifecyclemodel ...` 或 `tiangong process ...` 构建子命令 | P1 |
 | `lifecycleinventory-review` | 仍是 review workflow | Python review script | 迁成 `tiangong review process` | P2 |
@@ -127,16 +127,22 @@
 - [x] `state-lock` 模块：本地单写者锁
 - [x] `http` / `rest-client` 模块：统一 REST 调用、重试、超时、错误格式
 - [x] `llm` 模块：统一模型调用抽象，不再直接暴露 `OPENAI_*`
-- [ ] `kb` 模块：统一知识库 REST 客户端
-- [ ] `mineru` 模块：统一 OCR / SI 解析客户端
-- [ ] `publish` 模块：统一 dry-run / commit / publish report
-- [ ] `validation` 模块：把 `tidas-sdk` / `tidas-tools` 校验调用收口到 CLI
+- [x] `kb-search` 模块：统一 `tiangong-ai-edge-function` 检索客户端
+- [x] `unstructured` 模块：统一 TianGong unstructured OCR / SI 解析客户端（当前使用 `/mineru_with_images`）
+- [x] `publish` 模块：统一 dry-run / commit / publish report
+- [x] `validation` 模块：把 `tidas-sdk` / `tidas-tools` 校验调用收口到 CLI
 
 完成定义：
 
-- [ ] 重 workflow 不再需要自己管理 env 解析
+- [x] 重 workflow 不再需要自己管理 env 解析
 - [x] 重 workflow 不再需要自己管理 artifact 目录约定
-- [ ] 后续命令只是在复用 CLI 模块，而不是复制 Python 脚本
+- [x] 后续命令只是在复用 CLI 模块，而不是复制 Python 脚本
+
+当前落地点：
+
+- `tiangong publish run`：统一 publish request、bundle ingestion、dry-run / commit override、publish-report
+- `tiangong validation run`：统一 `tidas-sdk` / `tidas-tools` 报告形状与选择逻辑
+- `publish` 当前不会为了兼容旧实现而把 MCP 写库路径倒灌进 CLI；远端 commit 通过后续显式 executor 接入
 
 ## Phase 3：迁 `process-automated-builder`
 
@@ -155,8 +161,8 @@
 - [ ] flow search 改为直接 REST，而不是 MCP
 - [ ] publish 改为直接 REST，而不是 MCP CRUD
 - [ ] LLM 调用改为 CLI 自己的 provider abstraction
-- [ ] KB 检索改为 CLI 自己的 KB client
-- [ ] MinerU 调用改为 CLI 自己的 client
+- [ ] KB 检索改为 CLI 自己的 AI edge search client
+- [ ] unstructured 调用改为 CLI 自己的 client
 - [ ] 本地状态锁、cache、resume 逻辑迁到 CLI
 - [ ] 保留 artifact 契约，不保留 Python 实现
 
@@ -246,11 +252,15 @@
 - [x] `TIANGONG_LCA_LLM_API_KEY`
 - [x] `TIANGONG_LCA_LLM_MODEL`
 - [x] `TIANGONG_LCA_LLM_BASE_URL`
-- [ ] `TIANGONG_LCA_KB_API_BASE_URL`
-- [ ] `TIANGONG_LCA_KB_API_KEY`
-- [ ] `TIANGONG_LCA_KB_DATASET_ID`
-- [ ] `TIANGONG_LCA_MINERU_API_BASE_URL`
-- [ ] `TIANGONG_LCA_MINERU_API_KEY`
+- [x] `TIANGONG_LCA_KB_SEARCH_API_BASE_URL`
+- [x] `TIANGONG_LCA_KB_SEARCH_API_KEY`
+- [x] `TIANGONG_LCA_KB_SEARCH_REGION`
+- [x] `TIANGONG_LCA_UNSTRUCTURED_API_BASE_URL`
+- [x] `TIANGONG_LCA_UNSTRUCTURED_API_KEY`
+- [x] `TIANGONG_LCA_UNSTRUCTURED_PROVIDER`
+- [x] `TIANGONG_LCA_UNSTRUCTURED_MODEL`
+- [x] `TIANGONG_LCA_UNSTRUCTURED_CHUNK_TYPE`
+- [x] `TIANGONG_LCA_UNSTRUCTURED_RETURN_TXT`
 - [ ] `TIANGONG_LCA_CLI_DIR`
 
 ### 7.3 应彻底淘汰
@@ -303,6 +313,6 @@
 
 判断迁移是否走在正确方向上，只问一句：
 
-> 一个 agent 要完成工作时，是否只需要知道 `tiangong` 命令树，而不需要知道 skills 内部 shell、Python、MCP、OpenAI、KB、MinerU 的实现细节？
+> 一个 agent 要完成工作时，是否只需要知道 `tiangong` 命令树，而不需要知道 skills 内部 shell、Python、MCP、OpenAI、AI edge search、unstructured 的实现细节？
 
 如果答案还是“否”，说明迁移还没完成。
