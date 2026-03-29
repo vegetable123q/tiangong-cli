@@ -6,6 +6,7 @@ import path from 'node:path';
 import { executeCli } from '../src/cli.js';
 import type { DotEnvLoadResult } from '../src/lib/dotenv.js';
 import type { FetchLike } from '../src/lib/http.js';
+import type { RunFlowReviewOptions } from '../src/lib/review-flow.js';
 
 const dotEnvStatus: DotEnvLoadResult = {
   loaded: false,
@@ -153,6 +154,15 @@ test('executeCli returns help for publish and validation subcommands', async () 
     /tiangong review process --run-root <dir> --run-id <id> --out-dir <dir>/u,
   );
   assert.match(reviewHelp.stdout, /--enable-llm/u);
+
+  const reviewFlowHelp = await executeCli(['review', 'flow', '--help'], makeDeps());
+  assert.equal(reviewFlowHelp.exitCode, 0);
+  assert.ok(
+    reviewFlowHelp.stdout.includes(
+      'tiangong review flow (--rows-file <file> | --flows-dir <dir> | --run-root <dir>) --out-dir <dir>',
+    ),
+  );
+  assert.match(reviewFlowHelp.stdout, /--similarity-threshold/u);
 });
 
 test('executeCli returns group help for search and admin namespaces', async () => {
@@ -1465,17 +1475,7 @@ test('executeCli returns planned command message for lifecyclemodel subcommands 
   assert.match(result.stderr, /Command 'lifecyclemodel auto-build'/u);
 });
 
-test('executeCli returns planned command message and dedicated help for review flow and lifecyclemodel', async () => {
-  const flowResult = await executeCli(['review', 'flow'], makeDeps());
-  assert.equal(flowResult.exitCode, 2);
-  assert.equal(flowResult.stdout, '');
-  assert.match(flowResult.stderr, /Command 'review flow'/u);
-
-  const flowHelpResult = await executeCli(['review', 'flow', '--help'], makeDeps());
-  assert.equal(flowHelpResult.exitCode, 0);
-  assert.match(flowHelpResult.stdout, /Planned contract:/u);
-  assert.match(flowHelpResult.stdout, /flow governance/u);
-
+test('executeCli returns planned command message and dedicated help for review lifecyclemodel', async () => {
   const lifecyclemodelResult = await executeCli(['review', 'lifecyclemodel'], makeDeps());
   assert.equal(lifecyclemodelResult.exitCode, 2);
   assert.equal(lifecyclemodelResult.stdout, '');
@@ -1488,6 +1488,270 @@ test('executeCli returns planned command message and dedicated help for review f
   assert.equal(lifecyclemodelHelpResult.exitCode, 0);
   assert.match(lifecyclemodelHelpResult.stdout, /Planned contract:/u);
   assert.match(lifecyclemodelHelpResult.stdout, /lifecycle model build run/u);
+});
+
+test('executeCli dispatches review flow to the implemented CLI module', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-review-flow-dispatch-'));
+  const rowsFile = path.join(dir, 'flows.json');
+  writeFileSync(rowsFile, '[]\n', 'utf8');
+
+  try {
+    let observedOptions: RunFlowReviewOptions | undefined;
+    const result = await executeCli(
+      [
+        'review',
+        'flow',
+        '--rows-file',
+        rowsFile,
+        '--out-dir',
+        path.join(dir, 'review'),
+        '--run-id',
+        'flow-run',
+        '--enable-llm',
+        '--llm-max-flows',
+        '5',
+        '--llm-batch-size',
+        '2',
+        '--similarity-threshold',
+        '0.9',
+        '--methodology-id',
+        'custom-method',
+        '--json',
+      ],
+      {
+        ...makeDeps(),
+        runFlowReviewImpl: async (options) => {
+          observedOptions = options;
+          return {
+            schema_version: 1,
+            generated_at_utc: '2026-03-30T00:00:00.000Z',
+            status: 'completed_local_flow_review',
+            run_id: 'flow-run',
+            out_dir: path.join(dir, 'review'),
+            input_mode: 'rows_file',
+            effective_flows_dir: path.join(dir, 'review-input', 'flows'),
+            logic_version: 'flow-v1.0-cli',
+            flow_count: 1,
+            similarity_threshold: 0.9,
+            methodology_rule_source: 'custom-method',
+            with_reference_context: false,
+            reference_context_mode: 'disabled',
+            rule_finding_count: 1,
+            llm_finding_count: 0,
+            finding_count: 1,
+            severity_counts: { warning: 1 },
+            rule_counts: { sample_rule: 1 },
+            llm: {
+              enabled: true,
+              ok: true,
+              batch_count: 1,
+              reviewed_flow_count: 1,
+              truncated: false,
+              batch_results: [],
+            },
+            files: {
+              review_input_summary: path.join(dir, 'review', 'review-input-summary.json'),
+              materialization_summary: path.join(
+                dir,
+                'review',
+                'review-input',
+                'materialization-summary.json',
+              ),
+              rule_findings: path.join(dir, 'review', 'rule_findings.jsonl'),
+              llm_findings: path.join(dir, 'review', 'llm_findings.jsonl'),
+              findings: path.join(dir, 'review', 'findings.jsonl'),
+              flow_summaries: path.join(dir, 'review', 'flow_summaries.jsonl'),
+              similarity_pairs: path.join(dir, 'review', 'similarity_pairs.jsonl'),
+              summary: path.join(dir, 'review', 'flow_review_summary.json'),
+              review_zh: path.join(dir, 'review', 'flow_review_zh.md'),
+              review_en: path.join(dir, 'review', 'flow_review_en.md'),
+              timing: path.join(dir, 'review', 'flow_review_timing.md'),
+              report: path.join(dir, 'review', 'flow_review_report.json'),
+            },
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stderr, '');
+    assert.equal(JSON.parse(result.stdout).status, 'completed_local_flow_review');
+    assert.equal(observedOptions?.rowsFile, rowsFile);
+    assert.equal(observedOptions?.runId, 'flow-run');
+    assert.equal(observedOptions?.enableLlm, true);
+    assert.equal(observedOptions?.llmMaxFlows, 5);
+    assert.equal(observedOptions?.llmBatchSize, 2);
+    assert.equal(observedOptions?.similarityThreshold, 0.9);
+    assert.equal(observedOptions?.methodologyId, 'custom-method');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('executeCli supports alternate review flow input modes and validates numeric review-flow flags', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-review-flow-alt-dispatch-'));
+  const rowsFile = path.join(dir, 'flows.json');
+  const observedOptions: RunFlowReviewOptions[] = [];
+
+  writeFileSync(rowsFile, '[]\n', 'utf8');
+
+  try {
+    const runFlowReviewImpl = async (options: RunFlowReviewOptions) => {
+      observedOptions.push(options);
+      const inputMode: 'flows_dir' | 'run_root' | 'rows_file' = options.flowsDir
+        ? 'flows_dir'
+        : options.runRoot
+          ? 'run_root'
+          : 'rows_file';
+      const effectiveFlowsDir =
+        options.flowsDir ??
+        options.runRoot ??
+        path.join(path.dirname(options.outDir), 'review-input', 'flows');
+      return {
+        schema_version: 1 as const,
+        generated_at_utc: '2026-03-30T00:00:00.000Z',
+        status: 'completed_local_flow_review' as const,
+        run_id: options.runId ?? 'flow-run',
+        out_dir: options.outDir,
+        input_mode: inputMode,
+        effective_flows_dir: effectiveFlowsDir,
+        logic_version: options.logicVersion ?? 'flow-v1.0-cli',
+        flow_count: 1,
+        similarity_threshold: options.similarityThreshold ?? 0.92,
+        methodology_rule_source: options.methodologyId ?? 'built_in',
+        with_reference_context: false as const,
+        reference_context_mode: 'disabled' as const,
+        rule_finding_count: 1,
+        llm_finding_count: 0,
+        finding_count: 1,
+        severity_counts: { warning: 1 },
+        rule_counts: { sample_rule: 1 },
+        llm: {
+          enabled: Boolean(options.enableLlm),
+          batch_count: 0,
+          reviewed_flow_count: 0,
+          truncated: false,
+          batch_results: [],
+        },
+        files: {
+          review_input_summary: path.join(options.outDir, 'review-input-summary.json'),
+          materialization_summary: null,
+          rule_findings: path.join(options.outDir, 'rule_findings.jsonl'),
+          llm_findings: path.join(options.outDir, 'llm_findings.jsonl'),
+          findings: path.join(options.outDir, 'findings.jsonl'),
+          flow_summaries: path.join(options.outDir, 'flow_summaries.jsonl'),
+          similarity_pairs: path.join(options.outDir, 'similarity_pairs.jsonl'),
+          summary: path.join(options.outDir, 'flow_review_summary.json'),
+          review_zh: path.join(options.outDir, 'flow_review_zh.md'),
+          review_en: path.join(options.outDir, 'flow_review_en.md'),
+          timing: path.join(options.outDir, 'flow_review_timing.md'),
+          report: path.join(options.outDir, 'flow_review_report.json'),
+        },
+      };
+    };
+
+    const flowsDir = path.join(dir, 'flows');
+    const flowsDirResult = await executeCli(
+      ['review', 'flow', '--flows-dir', flowsDir, '--out-dir', path.join(dir, 'review-flows')],
+      {
+        ...makeDeps(),
+        runFlowReviewImpl,
+      },
+    );
+    assert.equal(flowsDirResult.exitCode, 0);
+    assert.equal(observedOptions[0].flowsDir, flowsDir);
+    assert.equal(observedOptions[0].rowsFile, undefined);
+    assert.equal(observedOptions[0].runRoot, undefined);
+    assert.equal(observedOptions[0].runId, undefined);
+
+    const runRoot = path.join(dir, 'run-root');
+    const runRootResult = await executeCli(
+      [
+        'review',
+        'flow',
+        '--run-root',
+        runRoot,
+        '--run-id',
+        'run-root-review',
+        '--out-dir',
+        path.join(dir, 'review-run-root'),
+        '--start-ts',
+        '2026-03-30T00:00:00.000Z',
+        '--end-ts',
+        '2026-03-30T00:05:00.000Z',
+        '--logic-version',
+        'flow-v2',
+        '--llm-model',
+        'gpt-5.4-mini',
+      ],
+      {
+        ...makeDeps(),
+        runFlowReviewImpl,
+      },
+    );
+    assert.equal(runRootResult.exitCode, 0);
+    assert.equal(observedOptions[1].runRoot, runRoot);
+    assert.equal(observedOptions[1].flowsDir, undefined);
+    assert.equal(observedOptions[1].runId, 'run-root-review');
+    assert.equal(observedOptions[1].startTs, '2026-03-30T00:00:00.000Z');
+    assert.equal(observedOptions[1].endTs, '2026-03-30T00:05:00.000Z');
+    assert.equal(observedOptions[1].logicVersion, 'flow-v2');
+    assert.equal(observedOptions[1].llmModel, 'gpt-5.4-mini');
+
+    const badFlagResult = await executeCli(['review', 'flow', '--bad-flag'], makeDeps());
+    assert.equal(badFlagResult.exitCode, 2);
+    assert.match(badFlagResult.stderr, /INVALID_ARGS/u);
+
+    const invalidMaxFlowsResult = await executeCli(
+      [
+        'review',
+        'flow',
+        '--rows-file',
+        rowsFile,
+        '--out-dir',
+        path.join(dir, 'bad-max'),
+        '--llm-max-flows',
+        '0',
+      ],
+      makeDeps(),
+    );
+    assert.equal(invalidMaxFlowsResult.exitCode, 2);
+    assert.match(invalidMaxFlowsResult.stderr, /INVALID_LLM_MAX_FLOWS/u);
+
+    const invalidBatchSizeResult = await executeCli(
+      [
+        'review',
+        'flow',
+        '--rows-file',
+        rowsFile,
+        '--out-dir',
+        path.join(dir, 'bad-batch'),
+        '--llm-batch-size',
+        '0',
+      ],
+      makeDeps(),
+    );
+    assert.equal(invalidBatchSizeResult.exitCode, 2);
+    assert.match(invalidBatchSizeResult.stderr, /INVALID_LLM_BATCH_SIZE/u);
+
+    const invalidThresholdResult = await executeCli(
+      [
+        'review',
+        'flow',
+        '--rows-file',
+        rowsFile,
+        '--out-dir',
+        path.join(dir, 'bad-threshold'),
+        '--similarity-threshold',
+        '0',
+      ],
+      makeDeps(),
+    );
+    assert.equal(invalidThresholdResult.exitCode, 2);
+    assert.match(invalidThresholdResult.stderr, /INVALID_SIMILARITY_THRESHOLD/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('executeCli returns planned command message for other unimplemented process subcommands', async () => {

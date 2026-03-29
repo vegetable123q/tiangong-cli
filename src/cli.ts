@@ -45,6 +45,11 @@ import {
   type ProcessReviewReport,
   type RunProcessReviewOptions,
 } from './lib/review-process.js';
+import {
+  runFlowReview,
+  type FlowReviewReport,
+  type RunFlowReviewOptions,
+} from './lib/review-flow.js';
 import { executeRemoteCommand, getRemoteCommandHelp } from './lib/remote.js';
 import {
   runValidation,
@@ -78,6 +83,7 @@ export type CliDeps = {
     options: RunProcessPublishBuildOptions,
   ) => Promise<ProcessPublishBuildReport>;
   runProcessReviewImpl?: (options: RunProcessReviewOptions) => Promise<ProcessReviewReport>;
+  runFlowReviewImpl?: (options: RunFlowReviewOptions) => Promise<FlowReviewReport>;
 };
 
 export type CliResult = {
@@ -111,7 +117,7 @@ Implemented Commands:
   search     flow | process | lifecyclemodel
   process    get | auto-build | resume-build | publish-build | batch-build
   lifecyclemodel build-resulting-process | publish-resulting-process
-  review     process
+  review     process | flow
   publish    run
   validation run
   admin      embedding-run
@@ -119,7 +125,7 @@ Implemented Commands:
 Planned Surface (not implemented yet):
   auth       whoami | doctor-auth
   lifecyclemodel auto-build | validate-build | publish-build
-  review     flow | lifecyclemodel
+  review     lifecyclemodel
   flow       get | list | remediate | publish-version | regen-product
   job        get | wait | logs
 
@@ -135,6 +141,7 @@ Examples:
   tiangong process publish-build --run-id <id>
   tiangong process batch-build --input ./batch-request.json
   tiangong review process --run-root ./artifacts/process_from_flow/<run_id> --run-id <run_id> --out-dir ./review
+  tiangong review flow --rows-file ./flows.json --out-dir ./review
   tiangong publish run --input ./publish-request.json --dry-run
   tiangong validation run --input-dir ./package --engine auto
   tiangong admin embedding-run --input ./jobs.json
@@ -218,9 +225,9 @@ function renderReviewHelp(): string {
 
 Implemented Subcommands:
   process      Review one local process build run and emit artifact-first findings
+  flow         Review local flow governance snapshots and emit artifact-first findings
 
 Planned Subcommands:
-  flow           Review flow governance artifacts through the unified CLI
   lifecyclemodel Review lifecycle model build artifacts through the unified CLI
 
 Examples:
@@ -245,6 +252,30 @@ Options:
   --enable-llm              Enable optional semantic review via the CLI LLM client
   --llm-model <name>        Override TIANGONG_LCA_LLM_MODEL for this command
   --llm-max-processes <n>   Cap how many process summaries are sent to the LLM (default: 8)
+  --json                    Print compact JSON
+  -h, --help
+`.trim();
+}
+
+function renderReviewFlowHelp(): string {
+  return `Usage:
+  tiangong review flow (--rows-file <file> | --flows-dir <dir> | --run-root <dir>) --out-dir <dir> [options]
+
+Options:
+  --rows-file <file>        Flow rows JSON / JSONL file; the CLI materializes review-input/flows automatically
+  --flows-dir <dir>         Directory containing per-flow JSON files
+  --run-root <dir>          Existing run root containing cache/flows or exports/flows
+  --run-id <id>             Optional run identifier override
+  --out-dir <dir>           Review artifact output directory
+  --start-ts <iso>          Optional run start timestamp
+  --end-ts <iso>            Optional run end timestamp
+  --logic-version <name>    Review logic version label (default: flow-v1.0-cli)
+  --enable-llm              Enable optional semantic review via the CLI LLM client
+  --llm-model <name>        Override TIANGONG_LCA_LLM_MODEL for this command
+  --llm-max-flows <n>       Cap how many flow summaries are sent to the LLM (default: 120)
+  --llm-batch-size <n>      Cap how many flow summaries each LLM batch sends (default: 20)
+  --similarity-threshold <n> Similarity threshold for duplicate-candidate warnings (default: 0.92)
+  --methodology-id <name>   Label written into methodology-backed rule findings (default: built_in)
   --json                    Print compact JSON
   -h, --help
 `.trim();
@@ -424,17 +455,6 @@ Status:
 } as const;
 
 const reviewPlannedHelp = {
-  flow: `Usage:
-  tiangong review flow --input <file> [options]
-
-Planned contract:
-  - load one local flow governance subject or run bundle
-  - emit artifact-first review findings and remediation handoff
-  - remove direct MCP / OpenAI logic from skill wrappers
-
-Status:
-  Planned command. Execution is not implemented yet.
-`.trim(),
   lifecyclemodel: `Usage:
   tiangong review lifecyclemodel --input <file> [options]
 
@@ -781,6 +801,117 @@ function parseReviewProcessFlags(args: string[]): {
   };
 }
 
+function parseReviewFlowFlags(args: string[]): {
+  help: boolean;
+  json: boolean;
+  rowsFile: string | undefined;
+  flowsDir: string | undefined;
+  runRoot: string | undefined;
+  runId: string | undefined;
+  outDir: string;
+  startTs: string | undefined;
+  endTs: string | undefined;
+  logicVersion: string | undefined;
+  enableLlm: boolean;
+  llmModel: string | undefined;
+  llmMaxFlows: number | undefined;
+  llmBatchSize: number | undefined;
+  similarityThreshold: number | undefined;
+  methodologyId: string | undefined;
+} {
+  let values: ReturnType<typeof parseArgs>['values'];
+  try {
+    ({ values } = parseArgs({
+      args,
+      allowPositionals: false,
+      strict: true,
+      options: {
+        help: { type: 'boolean', short: 'h' },
+        json: { type: 'boolean' },
+        'rows-file': { type: 'string' },
+        'flows-dir': { type: 'string' },
+        'run-root': { type: 'string' },
+        'run-id': { type: 'string' },
+        'out-dir': { type: 'string' },
+        'start-ts': { type: 'string' },
+        'end-ts': { type: 'string' },
+        'logic-version': { type: 'string' },
+        'enable-llm': { type: 'boolean' },
+        'llm-model': { type: 'string' },
+        'llm-max-flows': { type: 'string' },
+        'llm-batch-size': { type: 'string' },
+        'similarity-threshold': { type: 'string' },
+        'methodology-id': { type: 'string' },
+      },
+    }));
+  } catch (error) {
+    throw new CliError(String(error), {
+      code: 'INVALID_ARGS',
+      exitCode: 2,
+    });
+  }
+
+  const parsePositiveIntegerFlag = (
+    value: unknown,
+    label: string,
+    code: string,
+  ): number | undefined => {
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new CliError(`Expected ${label} to be a positive integer.`, {
+        code,
+        exitCode: 2,
+      });
+    }
+    return parsed;
+  };
+
+  const similarityThreshold =
+    typeof values['similarity-threshold'] === 'string'
+      ? Number.parseFloat(values['similarity-threshold'])
+      : undefined;
+  if (
+    values['similarity-threshold'] !== undefined &&
+    (!Number.isFinite(similarityThreshold) || (similarityThreshold as number) <= 0)
+  ) {
+    throw new CliError('Expected --similarity-threshold to be a positive number.', {
+      code: 'INVALID_SIMILARITY_THRESHOLD',
+      exitCode: 2,
+    });
+  }
+
+  return {
+    help: Boolean(values.help),
+    json: Boolean(values.json),
+    rowsFile: typeof values['rows-file'] === 'string' ? values['rows-file'] : undefined,
+    flowsDir: typeof values['flows-dir'] === 'string' ? values['flows-dir'] : undefined,
+    runRoot: typeof values['run-root'] === 'string' ? values['run-root'] : undefined,
+    runId: typeof values['run-id'] === 'string' ? values['run-id'] : undefined,
+    outDir: typeof values['out-dir'] === 'string' ? values['out-dir'] : '',
+    startTs: typeof values['start-ts'] === 'string' ? values['start-ts'] : undefined,
+    endTs: typeof values['end-ts'] === 'string' ? values['end-ts'] : undefined,
+    logicVersion: typeof values['logic-version'] === 'string' ? values['logic-version'] : undefined,
+    enableLlm: Boolean(values['enable-llm']),
+    llmModel: typeof values['llm-model'] === 'string' ? values['llm-model'] : undefined,
+    llmMaxFlows: parsePositiveIntegerFlag(
+      values['llm-max-flows'],
+      '--llm-max-flows',
+      'INVALID_LLM_MAX_FLOWS',
+    ),
+    llmBatchSize: parsePositiveIntegerFlag(
+      values['llm-batch-size'],
+      '--llm-batch-size',
+      'INVALID_LLM_BATCH_SIZE',
+    ),
+    similarityThreshold,
+    methodologyId:
+      typeof values['methodology-id'] === 'string' ? values['methodology-id'] : undefined,
+  };
+}
+
 function parseLifecyclemodelPublishFlags(args: string[]): {
   help: boolean;
   json: boolean;
@@ -1059,6 +1190,7 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
     const processResumeBuildImpl = deps.runProcessResumeBuildImpl ?? runProcessResumeBuild;
     const processPublishBuildImpl = deps.runProcessPublishBuildImpl ?? runProcessPublishBuild;
     const processReviewImpl = deps.runProcessReviewImpl ?? runProcessReview;
+    const flowReviewImpl = deps.runFlowReviewImpl ?? runFlowReview;
 
     if (flags.version) {
       return { exitCode: 0, stdout: '0.0.1\n', stderr: '' };
@@ -1386,6 +1518,38 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
         enableLlm: reviewFlags.enableLlm,
         llmModel: reviewFlags.llmModel,
         llmMaxProcesses: reviewFlags.llmMaxProcesses,
+        env: deps.env,
+        fetchImpl: deps.fetchImpl,
+      });
+
+      return {
+        exitCode: 0,
+        stdout: stringifyJson(report, reviewFlags.json),
+        stderr: '',
+      };
+    }
+
+    if (command === 'review' && subcommand === 'flow') {
+      const reviewFlags = parseReviewFlowFlags(commandArgs);
+      if (reviewFlags.help) {
+        return { exitCode: 0, stdout: `${renderReviewFlowHelp()}\n`, stderr: '' };
+      }
+
+      const report = await flowReviewImpl({
+        rowsFile: reviewFlags.rowsFile,
+        flowsDir: reviewFlags.flowsDir,
+        runRoot: reviewFlags.runRoot,
+        runId: reviewFlags.runId,
+        outDir: reviewFlags.outDir,
+        startTs: reviewFlags.startTs,
+        endTs: reviewFlags.endTs,
+        logicVersion: reviewFlags.logicVersion,
+        enableLlm: reviewFlags.enableLlm,
+        llmModel: reviewFlags.llmModel,
+        llmMaxFlows: reviewFlags.llmMaxFlows,
+        llmBatchSize: reviewFlags.llmBatchSize,
+        similarityThreshold: reviewFlags.similarityThreshold,
+        methodologyId: reviewFlags.methodologyId,
         env: deps.env,
         fetchImpl: deps.fetchImpl,
       });

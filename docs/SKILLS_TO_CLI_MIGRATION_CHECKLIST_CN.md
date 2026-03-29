@@ -74,7 +74,7 @@
 | `lifecyclemodel-automated-builder` | 仍是重 workflow | shell + Python + MCP + OpenAI | 迁成 `tiangong lifecyclemodel ...` 主链 | P1 |
 | `lifecyclemodel-resulting-process-builder` | CLI 本地 build/publish handoff + direct REST lookup 已落地，Node wrapper 已切换 | `node wrapper -> tiangong lifecyclemodel build/publish-resulting-process` | 保持薄 wrapper，作为 lifecyclemodel CLI 化参考模板 | P1 |
 | `lifecycleinventory-review` | 已进入 CLI 化，`review process` 已落地 | `node wrapper -> tiangong review process`，`review lifecyclemodel` 仍 planned | 保持薄 wrapper，并为后续 `review lifecyclemodel` 预留统一入口 | P2 |
-| `flow-governance-review` | 仍是治理 workflow | shell + 多个 Python helper + 可选 MCP | 迁成 `tiangong flow ...` / `tiangong review flow` | P2 |
+| `flow-governance-review` | 已进入 CLI 化，`review-flows` slice 已落地 | `node wrapper -> tiangong review flow`（仅 `review-flows` 已切换）；其余治理子命令仍为 shell + Python helper + 可选 MCP | 继续迁成 `tiangong flow ...` 主链，并缩小剩余 Python 治理面 | P2 |
 | `lifecyclemodel-recursive-orchestrator` | 仍是 orchestrator | Python orchestrator，串联多个技能 | 迁成 CLI 编排命令 | P3 |
 | `lca-publish-executor` | 已切到 CLI 收口，canonical 入口为 Node wrapper -> `tiangong publish run` | `skill -> tiangong publish run` | 仅保留薄 wrapper 与请求文档 | P2 |
 
@@ -86,6 +86,7 @@
 - `lifecyclemodel-resulting-process-builder` 已切成 Node wrapper -> CLI，shell 仅保留兼容壳；远端 lookup 现在也已经收口到 CLI 的 deterministic direct-read 路径。[`tiangong-lca-cli/src/lib/lifecyclemodel-resulting-process.ts`](../src/lib/lifecyclemodel-resulting-process.ts)
 - `lca-publish-executor` 已切成 Node wrapper -> `tiangong publish run`，不再把 publish contract 主逻辑继续留在 skill 自己的 Python 入口里。
 - `lifecycleinventory-review` 已切成统一 review 命令面：`tiangong review process` 在 CLI 中落地，skill 后续只应保留对该命令的薄调用；可选语义审核统一改走 `TIANGONG_LCA_LLM_*`，不再暴露 `OPENAI_*`。
+- `flow-governance-review` 的 `review-flows` 已切成 Node wrapper -> `tiangong review flow`；但其他治理、修复、发布相关子命令仍在 skill 本地 shell/Python helper 中，且部分路径仍依赖 MCP。
 - `process-automated-builder` 的技能文档和 canonical wrapper 已切到 Node -> CLI，但其剩余 LangGraph/Python 阶段和运行时配置代码仍然存在，且仍围绕 MCP / OpenAI / KB / TianGong unstructured 组织。[`tiangong-lca-skills/process-automated-builder/tiangong_lca_spec/core/config.py`](../../tiangong-lca-skills/process-automated-builder/tiangong_lca_spec/core/config.py)
 - `lifecyclemodel-automated-builder` 仍是 Python 脚本 + MCP/OpenAI 路径。[`tiangong-lca-skills/lifecyclemodel-automated-builder/SKILL.md`](../../tiangong-lca-skills/lifecyclemodel-automated-builder/SKILL.md)
 
@@ -330,10 +331,10 @@ ToDo：
 ToDo：
 
 - [x] `lifecycleinventory-review` -> `tiangong review process`
-- [ ] `flow-governance-review` -> `tiangong review flow`
-- [ ] 视需要补 `tiangong flow get|list|remediate|publish-version|regen-product`
-- [ ] review 输出继续保持本地 artifact-first
-- [ ] 去掉 review 脚本中的直接 OpenAI / MCP 路径
+- [x] `flow-governance-review` 的 `review-flows` slice -> `tiangong review flow`
+- [ ] `flow-governance-review` 的剩余治理子命令 -> `tiangong flow get|list|remediate|publish-version|regen-product`
+- [x] review 输出继续保持本地 artifact-first
+- [ ] 去掉剩余治理 / 修复脚本中的直接 MCP 路径
 
 完成定义：
 
@@ -449,7 +450,7 @@ ToDo：
 下一轮建议严格做这 5 件事（从当前状态继续推进）：
 
 1. 完成 `lifecyclemodel-automated-builder` 的 CLI 子命令切片设计（`auto-build` / `validate-build` / `publish-build`）。
-2. 把 `flow-governance-review` 收口到 `tiangong review flow` / `tiangong flow remediate`，而不是继续保留 Python 治理脚本为主入口。
+2. 继续把 `flow-governance-review` 剩余治理 / 修复 / 发布子链收口到 `tiangong flow ...`，以已经落地的 `tiangong review flow` 为统一 review 入口。
 3. 明确 publish commit 的唯一执行边界：`tiangong publish run` executor，不回流到 skill 私有实现。
 4. 继续迁掉 `process-automated-builder` 剩余 LangGraph/Python 阶段，而不是只停在 local handoff wrapper。
 5. 每个里程碑 merge 后，回到 `lca-workspace` 做子模块指针 bump。

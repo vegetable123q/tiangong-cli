@@ -48,6 +48,7 @@ tiangong
     publish-resulting-process
   review
     process
+    flow
   publish
     run
   validation
@@ -72,6 +73,7 @@ tiangong
 | `tiangong lifecyclemodel build-resulting-process` | 本地 lifecycle model resulting process 聚合、内部 flow 抵消、artifact 输出 |
 | `tiangong lifecyclemodel publish-resulting-process` | 读取 resulting-process run，生成 `publish-bundle.json` / `publish-intent.json` 本地交付物 |
 | `tiangong review process` | 本地 process review、artifact-first 报告输出、可选 CLI LLM 语义审核 |
+| `tiangong review flow` | 本地 flow governance review、rows-file 物化、artifact-first 报告输出、可选 CLI LLM 语义审核 |
 | `tiangong publish run` | 本地 publish 契约归一化、dry-run/commit、report 输出 |
 | `tiangong validation run` | 本地 `tidas-sdk` / `tidas-tools` 校验收口 |
 | `tiangong admin embedding-run` | `embedding_ft` |
@@ -85,7 +87,7 @@ tiangong
 `tiangong review ...` 也已经开始进入统一命令树，其中：
 
 - `tiangong review process` 已可执行
-- `tiangong review flow` 处于 planned 状态
+- `tiangong review flow` 已可执行
 - `tiangong review lifecyclemodel` 处于 planned 状态
 
 `tiangong process ...` 也已经开始承接 `process_from_flow` 主链迁移，其中：
@@ -111,6 +113,8 @@ tiangong
 - `build-resulting-process` 现在还支持一个显式的 deterministic direct-read 补全路径：当 request 打开 `process_sources.allow_remote_lookup=true` 时，CLI 会从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase REST 路径，按 `process_id/version` 直接补齐缺失的 process dataset
 - `publish-resulting-process` 当前负责生成本地 publish handoff 产物，还没有把提交语义直接并入 `publish run`
 - 已实现的 `review process` 保留本地 artifact-first review contract，把规则核查、报告输出和可选 LLM 语义审核统一收口到 CLI；语义审核只使用 `TIANGONG_LCA_LLM_*`，不再透出 `OPENAI_*`
+- 已实现的 `review flow` 保留本地 artifact-first governance review contract，把 flow 摘要、相似对、规则 findings、可选 LLM findings 和双语 markdown 报告统一收口到 CLI；语义审核同样只使用 `TIANGONG_LCA_LLM_*`
+- `review flow` 当前明确不支持 `--with-reference-context`，也还没有接入本地 registry enrichment；这部分仍需后续迁移切片单独落地
 - 其余未实现的 `lifecyclemodel` / `process` 子命令仍只提供 help 和固定命名
 - 这样做的目的不是“假装已完成”，而是先固定命令树，再逐个把 workflow 迁入 TypeScript CLI
 
@@ -305,6 +309,25 @@ tiangong admin embedding-run --input ./jobs.json --dry-run
 - 远端 remediation / publish
 - 任何 skill 私有的 `OPENAI_*` 调用路径
 
+`review flow` 现在固定的是“本地 flow governance review 契约层”。
+
+它负责：
+
+- 接受且只接受一种输入模式：`--rows-file`、`--flows-dir`、`--run-root`
+- 在 `--rows-file` 模式下物化 `review-input/flows/*.json` 与 `review-input/materialization-summary.json`
+- 输出 `rule_findings.jsonl`、`llm_findings.jsonl`、`findings.jsonl`
+- 输出 `flow_summaries.jsonl`、`similarity_pairs.jsonl`
+- 输出 `flow_review_summary.json`、`flow_review_zh.md`、`flow_review_en.md`、`flow_review_timing.md`
+- 输出 `flow_review_report.json`
+- 在显式启用 `--enable-llm` 时，通过 CLI 的 `TIANGONG_LCA_LLM_*` 运行时做可选语义审核
+
+它现在还不负责：
+
+- flow remediation / publish-version / regen-product
+- `--with-reference-context`
+- 本地 registry enrichment
+- 任何 skill 私有的 `OPENAI_*` 或 MCP review runtime
+
 `publish run` 现在固定的是“稳定 publish 契约层”，不是历史 MCP 写库脚本的 TypeScript 复刻。
 
 它负责：
@@ -357,6 +380,7 @@ TIANGONG_LCA_LLM_MODEL=
 - 不为了历史实现或未来猜测保留 alias
 - 某类能力如果还停留在 skills / Python workflow 层，就继续由那一层自己管理 env
 - `review process` 的可选语义审核统一走 `TIANGONG_LCA_LLM_*`，不再引入 `OPENAI_*`
+- `review flow` 的可选语义审核也统一走 `TIANGONG_LCA_LLM_*`，不再引入 `OPENAI_*`
 - `publish run` / `validation run` 都是本地契约与执行收口，不新增远程 env
 - 因此当前不预放 `TIANGONG_KB_*`、`TIANGONG_MINERU_*`、`OPENAI_*` 或 `TIANGONG_LCA_REMOTE_*`
 
@@ -372,6 +396,7 @@ TIANGONG_LCA_LLM_MODEL=
 | `lifecyclemodel build-resulting-process` | 本地运行默认无；若 request 开启 `process_sources.allow_remote_lookup=true`，则需要 `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
 | `lifecyclemodel publish-resulting-process` | 无 |
 | `review process` | 纯规则 review 默认无；若显式开启 `--enable-llm`，则需要 `TIANGONG_LCA_LLM_BASE_URL`、`TIANGONG_LCA_LLM_API_KEY`、`TIANGONG_LCA_LLM_MODEL` |
+| `review flow` | 纯规则 review 默认无；若显式开启 `--enable-llm`，则需要 `TIANGONG_LCA_LLM_BASE_URL`、`TIANGONG_LCA_LLM_API_KEY`、`TIANGONG_LCA_LLM_MODEL` |
 | `publish run` | 无 |
 | `validation run` | 无 |
 
@@ -435,6 +460,9 @@ npm run prepush:gate
 - `lifecycleinventory-review`
   - 已落地 `tiangong review process`
   - `review lifecyclemodel` 仍处于 planned 状态
+- `flow-governance-review`
+  - 已落地 `tiangong review flow`（当前只覆盖 `review-flows` slice）
+  - `tiangong flow remediate|publish-version|regen-product|...` 仍处于 planned 状态
 - 其他重型 Python workflow
 
 更合理的路径是：
