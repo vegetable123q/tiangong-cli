@@ -76,7 +76,7 @@
 | `lifecycleinventory-review` | 仍是 review workflow | Python review script | 迁成 `tiangong review process` | P2 |
 | `flow-governance-review` | 仍是治理 workflow | shell + 多个 Python helper + 可选 MCP | 迁成 `tiangong flow ...` / `tiangong review flow` | P2 |
 | `lifecyclemodel-recursive-orchestrator` | 仍是 orchestrator | Python orchestrator，串联多个技能 | 迁成 CLI 编排命令 | P3 |
-| `lca-publish-executor` | skills 侧已进入 CLI 收口（Node wrapper），等待并入主线 | `skill -> tiangong publish run` | 完成 merge 后仅保留薄 wrapper | P2 |
+| `lca-publish-executor` | 已切到 CLI 收口，canonical 入口为 Node wrapper -> `tiangong publish run` | `skill -> tiangong publish run` | 仅保留薄 wrapper 与请求文档 | P2 |
 
 ## 5. 现状证据
 
@@ -84,6 +84,7 @@
 
 - `flow-hybrid-search`、`process-hybrid-search`、`lifecyclemodel-hybrid-search`、`embedding-ft` 已切成 Node wrapper -> CLI，并完成了一轮 dry-run smoke check；这批技能已经不再以 Bash 作为 canonical path。
 - `lifecyclemodel-resulting-process-builder` 已切成 Node wrapper -> CLI，shell 仅保留兼容壳；远端 lookup 现在也已经收口到 CLI 的 deterministic direct-read 路径。[`tiangong-lca-cli/src/lib/lifecyclemodel-resulting-process.ts`](../src/lib/lifecyclemodel-resulting-process.ts)
+- `lca-publish-executor` 已切成 Node wrapper -> `tiangong publish run`，不再把 publish contract 主逻辑继续留在 skill 自己的 Python 入口里。
 - `process-automated-builder` 的技能文档和 canonical wrapper 已切到 Node -> CLI，但其剩余 LangGraph/Python 阶段和运行时配置代码仍然存在，且仍围绕 MCP / OpenAI / KB / TianGong unstructured 组织。[`tiangong-lca-skills/process-automated-builder/tiangong_lca_spec/core/config.py`](../../tiangong-lca-skills/process-automated-builder/tiangong_lca_spec/core/config.py)
 - `lifecyclemodel-automated-builder` 仍是 Python 脚本 + MCP/OpenAI 路径。[`tiangong-lca-skills/lifecyclemodel-automated-builder/SKILL.md`](../../tiangong-lca-skills/lifecyclemodel-automated-builder/SKILL.md)
 
@@ -245,12 +246,12 @@ ToDo：
 - [ ] 所有需要本地校验的 skill，统一改走 `tiangong validation run`
 - [ ] 所有需要 publish handoff 的 skill，统一改走 `tiangong publish run`
 - [ ] 若 `publish run` 还缺少远端 commit executor，则在 CLI 里补，不在 skills 里补
-- [ ] 将 `lca-publish-executor` 改成 CLI wrapper 或直接废弃
+- [x] 将 `lca-publish-executor` 改成 CLI wrapper 或直接废弃
 - [ ] 明确 relation manifest / deferred publish / dry-run / commit 的唯一语义
 
 完成定义：
 
-- [ ] `lca-publish-executor` 不再是 Python publish contract layer
+- [x] `lca-publish-executor` 不再是 canonical Python publish contract layer
 - [ ] 没有任何 skill 再维护独立 publish 契约
 - [ ] 没有任何 skill 再自行判断用 `tidas-sdk` 还是 `tidas-tools`
 
@@ -442,6 +443,7 @@ ToDo：
 4. `tiangong publish run` 与 `tiangong validation run` 作为统一契约边界落地。
 5. thin remote skills 已切为 Node wrapper -> CLI，并完成一轮 smoke check。
 6. `process-automated-builder` canonical wrapper 已切为 Node -> CLI；`run-process-automated-builder.sh` 已降为兼容壳。
+7. `lca-publish-executor` 已切为 Node wrapper -> `tiangong publish run`；publish skill 不再继续扩张私有 Python contract。
 
 下一轮建议严格做这 5 件事（从当前状态继续推进）：
 
