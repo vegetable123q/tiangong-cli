@@ -16,6 +16,7 @@
 - [ ] 不再新增任何 Python 业务 workflow
 - [ ] 不再新增任何 skill 自带 HTTP / MCP / env parsing
 - [ ] 不再新增任何基于 MCP 的 CLI 内部传输层
+- [ ] 不再新增任何 shell 兼容壳 wrapper；新 wrapper 直接使用原生 Node `.mjs`
 - [ ] 所有新能力只能先定义成 `tiangong <noun> <verb>` 命令，再实现
 - [ ] `tiangong-lca-skills` 中的 wrapper 只能调用 `tiangong`，不能再直接 `curl`、直接调 MCP、直接跑业务 Python
 - [ ] CLI 的 env 只能按实际已实现命令逐步增加，不预埋未来猜测接口
@@ -70,7 +71,7 @@
 | `process-hybrid-search` | 已完成 CLI 收口 | Node wrapper -> `tiangong search process`，shell 仅兼容壳 | 只保留 skill 文档，调用 `tiangong search process` | P0 |
 | `lifecyclemodel-hybrid-search` | 已完成 CLI 收口 | Node wrapper -> `tiangong search lifecyclemodel`，shell 仅兼容壳 | 只保留 skill 文档，调用 `tiangong search lifecyclemodel` | P0 |
 | `embedding-ft` | 已完成 CLI 收口 | Node wrapper -> `tiangong admin embedding-run`，shell 仅兼容壳 | 只保留 skill 文档，调用 `tiangong admin embedding-run` | P0 |
-| `process-automated-builder` | 已进入 CLI 化，但 canonical skill 入口仍是 Bash -> Python；CLI 只接管了本地 build/publish handoff slices | `tiangong process auto-build | resume-build | publish-build | batch-build` 已落地，但 skill 主入口仍为 shell + Python/LangGraph/MCP/OpenAI/AI edge search/TianGong unstructured | 把 skill 主入口改成 Node wrapper -> `tiangong process ...`，并持续缩小 legacy 路径 | P1 |
+| `process-automated-builder` | 已进入 CLI 化，canonical skill 入口切为原生 Node `.mjs`；CLI 先接管本地 build/publish handoff slices | `node wrapper (.mjs) -> tiangong process auto-build | resume-build | publish-build | batch-build`已落地；legacy Python/LangGraph/MCP/OpenAI/AI edge search/TianGong unstructured 仅保留在显式`legacy` 子命令后 | 继续把剩余 LangGraph/Python 阶段迁入 CLI 模块，并持续缩小 legacy 路径 | P1 |
 | `lifecyclemodel-automated-builder` | 仍是重 workflow | shell + Python + MCP + OpenAI | 迁成 `tiangong lifecyclemodel ...` 主链 | P1 |
 | `lifecyclemodel-resulting-process-builder` | CLI 本地 build/publish handoff + direct REST lookup 已落地，Node wrapper 已切换 | `node wrapper -> tiangong lifecyclemodel build/publish-resulting-process` | 保持薄 wrapper，作为 lifecyclemodel CLI 化参考模板 | P1 |
 | `lifecycleinventory-review` | 已进入 CLI 化，`review process` 已落地 | `node wrapper -> tiangong review process`，`review lifecyclemodel` 仍 planned | 保持薄 wrapper，并为后续 `review lifecyclemodel` 预留统一入口 | P2 |
@@ -83,11 +84,11 @@
 当前 workspace 的状态已经进一步推进，但重逻辑仍未完全离开 skills / Python 层：
 
 - `flow-hybrid-search`、`process-hybrid-search`、`lifecyclemodel-hybrid-search`、`embedding-ft` 已切成 Node wrapper -> CLI，并完成了一轮 dry-run smoke check；这批技能已经不再以 Bash 作为 canonical path。
-- `lifecyclemodel-resulting-process-builder` 已切成 Node wrapper -> CLI，shell 仅保留兼容壳；远端 lookup 现在也已经收口到 CLI 的 deterministic direct-read 路径。[`tiangong-lca-cli/src/lib/lifecyclemodel-resulting-process.ts`](../src/lib/lifecyclemodel-resulting-process.ts)
+- `lifecyclemodel-resulting-process-builder` 已切成 Node wrapper -> CLI；远端 lookup 现在也已经收口到 CLI 的 deterministic direct-read 路径。[`tiangong-lca-cli/src/lib/lifecyclemodel-resulting-process.ts`](../src/lib/lifecyclemodel-resulting-process.ts)
 - `lca-publish-executor` 已切成 Node wrapper -> `tiangong publish run`，不再把 publish contract 主逻辑继续留在 skill 自己的 Python 入口里。
 - `lifecycleinventory-review` 已切成统一 review 命令面：`tiangong review process` 在 CLI 中落地，skill 后续只应保留对该命令的薄调用；可选语义审核统一改走 `TIANGONG_LCA_LLM_*`，不再暴露 `OPENAI_*`。
 - `flow-governance-review` 的 `review-flows`、`remediate-flows`、`publish-version` 已切成 Node wrapper -> CLI，`flow get` / `flow list` CLI 读面也已落地；CLI 侧虽然已经落地 `tiangong flow regen-product`，但 skill 侧仍未把它暴露成 canonical wrapper，其他治理/修复相关子命令也仍在本地 shell/Python helper 中，且部分路径仍依赖 MCP。
-- `process-automated-builder` 的 CLI 本地 slices 已落地，但 skill 文档与 canonical wrapper 仍然围绕 Bash/Python/LangGraph/MCP/OpenAI/KB/TianGong unstructured 组织，尚未真正切成 `Node wrapper -> tiangong process ...`。[`tiangong-lca-skills/process-automated-builder/tiangong_lca_spec/core/config.py`](../../tiangong-lca-skills/process-automated-builder/tiangong_lca_spec/core/config.py)
+- `process-automated-builder` 的 canonical wrapper 已切成原生 Node `.mjs` -> `tiangong process ...`，并且不再保留 shell 兼容壳；但剩余 LangGraph/Python/MCP/OpenAI/KB/TianGong unstructured 业务阶段仍在显式 `legacy` 子命令后面，尚未迁入 CLI 模块。[`tiangong-lca-skills/process-automated-builder/tiangong_lca_spec/core/config.py`](../../tiangong-lca-skills/process-automated-builder/tiangong_lca_spec/core/config.py)
 - `lifecyclemodel-automated-builder` 仍是 Python 脚本 + MCP/OpenAI 路径。[`tiangong-lca-skills/lifecyclemodel-automated-builder/SKILL.md`](../../tiangong-lca-skills/lifecyclemodel-automated-builder/SKILL.md)
 
 这说明：
@@ -447,7 +448,7 @@ ToDo：
 3. `tiangong lifecyclemodel build-resulting-process` / `publish-resulting-process` 子命令落地。
 4. `tiangong publish run` 与 `tiangong validation run` 作为统一契约边界落地。
 5. thin remote skills 已切为 Node wrapper -> CLI，并完成一轮 smoke check。
-6. `process-automated-builder` canonical wrapper 已切为 Node -> CLI；`run-process-automated-builder.sh` 已降为兼容壳。
+6. `process-automated-builder` canonical wrapper 已切为原生 Node `.mjs` -> CLI；不再保留 shell 兼容壳。
 7. `lca-publish-executor` 已切为 Node wrapper -> `tiangong publish run`；publish skill 不再继续扩张私有 Python contract。
 
 下一轮建议严格做这 5 件事（从当前状态继续推进）：
