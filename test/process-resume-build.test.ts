@@ -13,6 +13,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { runProcessAutoBuild } from '../src/lib/process-auto-build.js';
 import { __testInternals, runProcessResumeBuild } from '../src/lib/process-resume-build.js';
+import { resolveTidasSdkPath } from './helpers/tidas-sdk-path.js';
 
 function writeJson(filePath: string, value: unknown): void {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -23,9 +24,10 @@ function readJson(filePath: string): Record<string, unknown> {
 }
 
 function bundledFlowPayload(): Record<string, unknown> {
-  return readJson(
-    path.resolve(process.cwd(), '../tidas-sdk/test-data/tidas-example-flow.json'),
-  ) as Record<string, unknown>;
+  return readJson(resolveTidasSdkPath('test-data', 'tidas-example-flow.json')) as Record<
+    string,
+    unknown
+  >;
 }
 
 function writeFlowFixture(dir: string): string {
@@ -376,18 +378,19 @@ test('runProcessResumeBuild rejects invalid inputs and corrupted process run art
 });
 
 test('process resume-build internals cover fallback layout and metadata helpers', () => {
+  const sampleRunDir = path.resolve(path.join(path.sep, 'tmp', 'process-run', 'run-123'));
   const resolvedLayout = __testInternals.resolveLayout({
-    runDir: '/tmp/process-run/run-123',
+    runDir: sampleRunDir,
   });
   assert.equal(resolvedLayout.runId, 'run-123');
   assert.equal(
     resolvedLayout.statePath,
-    '/tmp/process-run/run-123/cache/process_from_flow_state.json',
+    path.join(sampleRunDir, 'cache', 'process_from_flow_state.json'),
   );
   assert.equal(
     __testInternals.resolveLayout({
       runId: '   ',
-      runDir: '/tmp/process-run/run-123',
+      runDir: sampleRunDir,
     }).runId,
     'run-123',
   );
@@ -439,14 +442,14 @@ test('process resume-build internals cover fallback layout and metadata helpers'
   assert.equal(updatedState.resume_attempt, 3);
 
   const invocationIndex = __testInternals.buildInvocationIndex(
-    __testInternals.buildLayout('/tmp/process-run/run-123', 'run-123'),
+    __testInternals.buildLayout(sampleRunDir, 'run-123'),
     {
       schema_version: 2,
       invocations: [{ command: ['existing'] }],
     },
     {
       runId: 'run-123',
-      runDir: '/tmp/process-run/run-123',
+      runDir: sampleRunDir,
       cwd: '/tmp/workspace',
     },
     new Date('2026-03-29T06:30:00Z'),
@@ -456,7 +459,7 @@ test('process resume-build internals cover fallback layout and metadata helpers'
   assert.equal(invocationIndex.invocations.length, 2);
 
   const fallbackInvocationIndex = __testInternals.buildInvocationIndex(
-    __testInternals.buildLayout('/tmp/process-run/run-123', 'run-123'),
+    __testInternals.buildLayout(sampleRunDir, 'run-123'),
     {},
     {
       runId: 'run-123',
@@ -477,7 +480,7 @@ test('process resume-build internals cover fallback layout and metadata helpers'
   ]);
 
   const cwdFallbackInvocationIndex = __testInternals.buildInvocationIndex(
-    __testInternals.buildLayout('/tmp/process-run/run-123', 'run-123'),
+    __testInternals.buildLayout(sampleRunDir, 'run-123'),
     {},
     {
       runId: 'run-123',
@@ -489,7 +492,7 @@ test('process resume-build internals cover fallback layout and metadata helpers'
   assert.equal(cwdFallbackInvocationIndex.invocations[0]?.cwd, process.cwd());
 
   const fallbackReport = __testInternals.buildReport(
-    __testInternals.buildLayout('/tmp/process-run/run-123', 'run-123'),
+    __testInternals.buildLayout(sampleRunDir, 'run-123'),
     {},
     {
       resumedFrom: 'resume_prepared',
@@ -509,7 +512,7 @@ test('process resume-build internals cover fallback layout and metadata helpers'
   assert.equal(fallbackReport.attempt, 1);
 
   const nextActions = __testInternals.buildNextActions(
-    __testInternals.buildLayout('/tmp/process-run/run-123', 'run-123'),
+    __testInternals.buildLayout(sampleRunDir, 'run-123'),
     stateSummary,
   );
   assert.match(nextActions[3] ?? '', /future: migrate CLI stage executor/u);

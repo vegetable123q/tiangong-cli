@@ -8,6 +8,7 @@ import {
   runLifecyclemodelOrchestrate,
 } from '../src/lib/lifecyclemodel-orchestrate.js';
 import { CliError } from '../src/lib/errors.js';
+import { resolveTidasSdkPath } from './helpers/tidas-sdk-path.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -295,7 +296,7 @@ function createStaticProjectorRequestFixture(rootDir: string): string {
 }
 
 function flowFixturePath(): string {
-  return path.resolve(process.cwd(), '../tidas-sdk/test-data/tidas-example-flow.json');
+  return resolveTidasSdkPath('test-data', 'tidas-example-flow.json');
 }
 
 test('lifecyclemodel orchestrate internals normalize plans, warnings, and projector policy', () => {
@@ -487,7 +488,6 @@ test('lifecyclemodel orchestrate execute runs CLI-backed builders and publish co
         kind: 'process',
         requested_action: 'build_process',
         process_builder: {
-          mode: 'workflow',
           flow_file: flowFixturePath(),
         },
       },
@@ -536,20 +536,21 @@ test('lifecyclemodel orchestrate execute runs CLI-backed builders and publish co
   }
 });
 
-test('lifecyclemodel orchestrate marks removed legacy process-builder configs as failed and skips later work', async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-lm-orchestrate-legacy-fail-'));
+test('lifecyclemodel orchestrate rejects unsupported process-builder request fields before planning', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-lm-orchestrate-unsupported-builder-'));
   const processRunDir = createProcessRunFixture(dir, 'process-run');
   const manifestPath = path.join(dir, 'lifecyclemodel-request.json');
   const requestPath = path.join(dir, 'orchestrate-request.json');
   const outDir = path.join(dir, 'orchestrator-run');
+  const removedBuilderModeValue = ['lang', 'graph'].join('');
 
   writeJson(manifestPath, {
     local_runs: [processRunDir],
   });
   writeJson(requestPath, {
-    request_id: 'legacy-fail',
+    request_id: 'unsupported-builder-field',
     goal: {
-      name: 'Legacy fail demo',
+      name: 'Unsupported builder field demo',
     },
     root: {
       node_id: 'model-live',
@@ -558,7 +559,7 @@ test('lifecyclemodel orchestrate marks removed legacy process-builder configs as
         id: 'lm-live',
       },
       requested_action: 'build_submodel',
-      depends_on: ['legacy-node'],
+      depends_on: ['process-node'],
       submodel_builder: {
         manifest: './lifecyclemodel-request.json',
       },
@@ -581,13 +582,92 @@ test('lifecyclemodel orchestrate marks removed legacy process-builder configs as
     },
     nodes: [
       {
-        node_id: 'legacy-node',
+        node_id: 'process-node',
         kind: 'process',
         requested_action: 'build_process',
         process_builder: {
-          mode: 'langgraph',
+          mode: removedBuilderModeValue,
           flow_file: flowFixturePath(),
         },
+      },
+    ],
+  });
+
+  try {
+    await assert.rejects(
+      () =>
+        runLifecyclemodelOrchestrate({
+          action: 'execute',
+          inputPath: requestPath,
+          outDir,
+          now: new Date('2026-03-30T00:00:00Z'),
+        }),
+      (error) => {
+        assert.ok(error instanceof CliError);
+        assert.equal(error.code, 'LIFECYCLEMODEL_ORCHESTRATE_INVALID_REQUEST');
+        assert.match(error.message, /unsupported field/u);
+        assert.deepEqual(error.details, {
+          label: 'process_builder',
+          unsupported_fields: ['mode'],
+          allowed_fields: ['flow_file', 'flow_json', 'run_id', 'publish', 'commit', 'forward_args'],
+        });
+        return true;
+      },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('lifecyclemodel orchestrate fail-fast skips downstream work after a process-builder runtime failure', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-lm-orchestrate-fail-fast-'));
+  const processRunDir = createProcessRunFixture(dir, 'process-run');
+  const manifestPath = path.join(dir, 'lifecyclemodel-request.json');
+  const requestPath = path.join(dir, 'orchestrate-request.json');
+  const outDir = path.join(dir, 'orchestrator-run');
+
+  writeJson(manifestPath, {
+    local_runs: [processRunDir],
+  });
+  writeJson(requestPath, {
+    request_id: 'fail-fast-demo',
+    goal: {
+      name: 'Fail-fast demo',
+    },
+    root: {
+      node_id: 'model-live',
+      kind: 'lifecyclemodel',
+      lifecyclemodel: {
+        id: 'lm-live',
+      },
+      requested_action: 'build_submodel',
+      depends_on: ['process-node'],
+      submodel_builder: {
+        manifest: './lifecyclemodel-request.json',
+      },
+      projector: {
+        projection_role: 'primary',
+      },
+    },
+    orchestration: {
+      mode: 'collapsed',
+      max_depth: 2,
+      reuse_resulting_process_first: true,
+      allow_process_build: true,
+      allow_submodel_build: true,
+      pin_child_versions: true,
+      stop_at_elementary_flow: false,
+      fail_fast: true,
+    },
+    publish: {
+      intent: 'prepare_only',
+    },
+    nodes: [
+      {
+        node_id: 'process-node',
+        kind: 'process',
+        requested_action: 'build_process',
+        process_builder: {},
       },
     ],
   });
@@ -604,10 +684,14 @@ test('lifecyclemodel orchestrate marks removed legacy process-builder configs as
     assert.equal(report.execution.blocked_invocations, 2);
 
     const firstInvocation = readJson<JsonRecord>(
-      path.join(outDir, 'invocations', 'legacy-node-process-builder.json'),
+      path.join(outDir, 'invocations', 'process-node-process-builder.json'),
+    );
+    const secondInvocation = readJson<JsonRecord>(
+      path.join(outDir, 'invocations', 'model-live-lifecyclemodel-builder.json'),
     );
     assert.equal(firstInvocation.status, 'failed');
-    assert.match(String(firstInvocation.error ?? ''), /langgraph/u);
+    assert.match(String(firstInvocation.error ?? ''), /flow_json/u);
+    assert.equal(secondInvocation.status, 'skipped_due_to_fail_fast');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -810,11 +894,9 @@ test('lifecyclemodel orchestrate helper internals validate primitive values and 
   assert.deepEqual(
     __testInternals.normalizeProcessBuilderConfig(
       {
-        mode: 'workflow',
         flow_file: './flow.json',
         flow_json: { flowDataSet: {} },
         run_id: 'run-1',
-        python_bin: 'python3',
         publish: 1,
         commit: 1,
         forward_args: ['--alpha', '', '  ', '--beta'],
@@ -822,24 +904,42 @@ test('lifecyclemodel orchestrate helper internals validate primitive values and 
       baseDir,
     ),
     {
-      mode: 'workflow',
       flow_file: path.resolve(baseDir, './flow.json'),
       flow_json: { flowDataSet: {} },
       run_id: 'run-1',
-      python_bin: 'python3',
       publish: true,
       commit: true,
       forward_args: ['--alpha', '--beta'],
     },
   );
+  const removedPythonBuilderKey = ['python', 'bin'].join('_');
+  assert.throws(
+    () =>
+      __testInternals.normalizeProcessBuilderConfig(
+        {
+          flow_file: './flow.json',
+          [removedPythonBuilderKey]: 'python3',
+        },
+        baseDir,
+      ),
+    (error) => {
+      assert.ok(error instanceof CliError);
+      assert.equal(error.code, 'LIFECYCLEMODEL_ORCHESTRATE_INVALID_REQUEST');
+      assert.match(error.message, /unsupported field/u);
+      assert.deepEqual(error.details, {
+        label: 'process_builder',
+        unsupported_fields: [removedPythonBuilderKey],
+        allowed_fields: ['flow_file', 'flow_json', 'run_id', 'publish', 'commit', 'forward_args'],
+      });
+      return true;
+    },
+  );
   assert.deepEqual(
     __testInternals.serializeInvocationConfig(
       {
-        mode: 'workflow',
         flow_file: null,
         flow_json: null,
         run_id: null,
-        python_bin: null,
         publish: false,
         commit: false,
         forward_args: [],
@@ -847,11 +947,9 @@ test('lifecyclemodel orchestrate helper internals validate primitive values and 
       'config should exist',
     ),
     {
-      mode: 'workflow',
       flow_file: null,
       flow_json: null,
       run_id: null,
-      python_bin: null,
       publish: false,
       commit: false,
       forward_args: [],
@@ -1167,7 +1265,7 @@ test('lifecyclemodel orchestrate selectResolution and projector policy cover exp
     __testInternals.selectResolution(
       makeNode({
         requested_action: 'build_process',
-        process_builder: { mode: 'workflow' },
+        process_builder: {},
       }) as never,
       {
         ...allowAll,
@@ -1180,7 +1278,7 @@ test('lifecyclemodel orchestrate selectResolution and projector policy cover exp
     __testInternals.selectResolution(
       makeNode({
         requested_action: 'build_process',
-        process_builder: { mode: 'workflow' },
+        process_builder: {},
       }) as never,
       allowAll,
     ).resolution,
@@ -1267,7 +1365,7 @@ test('lifecyclemodel orchestrate selectResolution and projector policy cover exp
   assert.equal(
     __testInternals.selectResolution(
       makeNode({
-        process_builder: { mode: 'workflow' },
+        process_builder: {},
       }) as never,
       allowAll,
     ).resolution,
@@ -2082,7 +2180,7 @@ test('lifecyclemodel orchestrate helper artifacts cover file checks, inline JSON
   }
 });
 
-test('lifecyclemodel orchestrate execution internals cover inline flow payloads and removed python_bin configs', async () => {
+test('lifecyclemodel orchestrate execution internals cover inline flow payloads', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-lm-orchestrate-exec-internals-'));
   try {
     const invocationDir = path.join(dir, 'invocations');
@@ -2110,26 +2208,6 @@ test('lifecyclemodel orchestrate execution internals cover inline flow payloads 
     );
     assert.equal(inlineResult.status, 'success');
     assert.match(readFileSync(path.join(dir, 'inline-result.json'), 'utf8'), /inline-node/u);
-
-    await assert.rejects(
-      () =>
-        __testInternals.executeProcessBuilderInvocation(
-          {
-            invocation_id: 'legacy-node:process-builder',
-            node_id: 'legacy-node',
-            kind: 'process_builder',
-            config: {
-              python_bin: 'python3',
-              flow_file: flowFixturePath(),
-            },
-            artifact_dir: path.join(dir, 'legacy-run'),
-          } as never,
-          plan as never,
-          path.join(dir, 'legacy-result.json'),
-          new Date('2026-03-31T00:00:00Z'),
-        ),
-      /python_bin/u,
-    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -55,31 +55,24 @@
 
 ## 安装依赖
 
-参考 `tiangong-lca-next/DEV_CN.md`，本项目初始化命令保持一致：
+只需要一个可用的 Node.js `24.x` 运行时。本仓库不要求 `bash`、`nvm` 或其他 Unix-only 初始化工具。你可以使用自己平台上最稳定的安装方式，例如：
+
+- Windows: 官方 Node.js `24.x` 安装器
+- macOS: 官方安装器、`fnm` 或 `nvm`
+- Linux: 你自己的 Node 24 安装方式
 
 ```bash
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-
-nvm install
-nvm alias default 24
-nvm use
-
-npm install
-
-npm update && npm ci
+npm ci
+npm run build
 ```
 
 ## 配置文件
 
 本项目会自动加载仓库根目录下的 `.env` 文件。
 
-初始化：
+初始化时，把 `.env.example` 复制成仓库根目录下的 `.env`。推荐直接用编辑器或文件管理器完成这一步，这样 macOS / Linux / Windows 都不需要自行翻译 shell 命令。
 
-```bash
-cp .env.example .env
-```
-
-当前统一 CLI 真正需要的环境变量只有这一组：
+当前统一 CLI 的公开命令面必需环境变量是这一组：
 
 ```bash
 TIANGONG_LCA_API_BASE_URL=
@@ -95,7 +88,22 @@ TIANGONG_LCA_LLM_API_KEY=
 TIANGONG_LCA_LLM_MODEL=
 ```
 
-不再兼容旧变量名，也不再把 KB、TianGong unstructured service、MCP 相关 env 预先塞进统一 CLI。
+仓库里还已经存在一组 internal/preparatory env 归一化入口，但当前没有任何公开 `tiangong` 命令消费它们：
+
+```bash
+TIANGONG_LCA_KB_SEARCH_API_BASE_URL=
+TIANGONG_LCA_KB_SEARCH_API_KEY=
+TIANGONG_LCA_KB_SEARCH_REGION=us-east-1
+
+TIANGONG_LCA_UNSTRUCTURED_API_BASE_URL=
+TIANGONG_LCA_UNSTRUCTURED_API_KEY=
+TIANGONG_LCA_UNSTRUCTURED_PROVIDER=
+TIANGONG_LCA_UNSTRUCTURED_MODEL=
+TIANGONG_LCA_UNSTRUCTURED_CHUNK_TYPE=false
+TIANGONG_LCA_UNSTRUCTURED_RETURN_TXT=true
+```
+
+不再兼容旧变量名，也不再把 KB、TianGong unstructured service、MCP 相关 env 混写成当前公开命令面的必需配置。
 
 原因很直接：
 
@@ -103,7 +111,7 @@ TIANGONG_LCA_LLM_MODEL=
 - `review process` / `review flow` 的可选语义审核统一走 `TIANGONG_LCA_LLM_*`，不再使用 `OPENAI_*`
 - `publish run` / `validation run` 只做本地契约和执行收口，不新增远程 env
 - CLI 仓库内部虽然已经有 `kb-search` / `unstructured` 模块，但当前没有任何公开命令消费这些 env
-- 若未来 CLI 真正落地对应子命令，再按命令面新增 env，而不是提前暴露一整组无实际消费者的配置
+- `.env.example` 会把这类 key 标成 internal/preparatory，防止代码和文档脱节，也防止调用方误认为它们已经是稳定公开 contract
 
 命令级 env 现实如下：
 
@@ -136,39 +144,47 @@ TIANGONG_LCA_LLM_MODEL=
 
 ## 调试项目
 
+公开推荐的跨平台执行入口按优先级是：
+
+- `npm exec tiangong -- ...`
+- `node ./bin/tiangong.js ...`
+- `node ./dist/src/main.js ...`
+
+`npm start -- ...` 仍可用于本地开发时的“先构建再执行”，但它不是 skills / 文档的 canonical 公共入口。
+
 ```bash
-npm start -- --help
-npm start -- doctor
-npm start -- doctor --json
-npm start -- search flow --input ./request.json --dry-run
-npm start -- process get --id <process-id> --version <version> --json
-npm start -- process auto-build --input ./examples/process-auto-build.request.json --json
-npm start -- process resume-build --run-id <run-id> --json
-npm start -- process publish-build --run-id <run-id> --json
-npm start -- process batch-build --input ./examples/process-batch-build.request.json --json
-npm start -- lifecyclemodel auto-build --input ./examples/lifecyclemodel-auto-build.request.json --json
-npm start -- lifecyclemodel validate-build --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --json
-npm start -- lifecyclemodel publish-build --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --json
-npm start -- lifecyclemodel orchestrate plan --input ./lifecyclemodel-orchestrate.request.json --out-dir ./artifacts/lifecyclemodel_recursive/<run_id> --json
-npm start -- lifecyclemodel build-resulting-process --input ./request.json --json
-npm start -- lifecyclemodel publish-resulting-process --run-dir ./runs/example --publish-processes --publish-relations --json
-npm start -- review process --run-root ./artifacts/process_from_flow/<run_id> --run-id <run_id> --out-dir ./review --json
-npm start -- review flow --rows-file ./flows.json --out-dir ./flow-review --json
-npm start -- review lifecyclemodel --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --out-dir ./lifecyclemodel-review --json
-npm start -- flow get --id <flow-id> --version <version> --json
-npm start -- flow list --id <flow-id> --state-code 100 --limit 20 --json
-npm start -- flow remediate --input-file ./invalid-flows.jsonl --out-dir ./flow-remediation --json
-npm start -- flow publish-version --input-file ./ready-flows.jsonl --out-dir ./flow-publish --dry-run --json
-npm start -- flow publish-reviewed-data --flow-rows-file ./reviewed-flows.jsonl --original-flow-rows-file ./original-flows.jsonl --out-dir ./flow-publish-reviewed --dry-run --json
-npm start -- flow build-alias-map --old-flow-file ./old-flows.jsonl --new-flow-file ./new-flows.jsonl --out-dir ./flow-alias-map --json
-npm start -- flow scan-process-flow-refs --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-scan --json
-npm start -- flow plan-process-flow-repairs --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --scan-findings ./flow-scan/scan-findings.json --out-dir ./flow-repair-plan --json
-npm start -- flow apply-process-flow-repairs --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --scan-findings ./flow-scan/scan-findings.json --out-dir ./flow-repair-apply --json
-npm start -- flow regen-product --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-regen --apply --json
-npm start -- flow validate-processes --original-processes-file ./before.jsonl --patched-processes-file ./after.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-validate --json
-npm start -- publish run --input ./examples/publish-run.request.json --dry-run
-npm start -- validation run --input-dir ./tidas-package --engine auto
-npm start -- admin embedding-run --input ./jobs.json --dry-run
+npm exec tiangong -- --help
+npm exec tiangong -- doctor
+npm exec tiangong -- doctor --json
+npm exec tiangong -- search flow --input ./request.json --dry-run
+npm exec tiangong -- process get --id <process-id> --version <version> --json
+npm exec tiangong -- process auto-build --input ./examples/process-auto-build.request.json --json
+npm exec tiangong -- process resume-build --run-id <run-id> --json
+npm exec tiangong -- process publish-build --run-id <run-id> --json
+npm exec tiangong -- process batch-build --input ./examples/process-batch-build.request.json --json
+npm exec tiangong -- lifecyclemodel auto-build --input ./examples/lifecyclemodel-auto-build.request.json --json
+npm exec tiangong -- lifecyclemodel validate-build --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --json
+npm exec tiangong -- lifecyclemodel publish-build --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --json
+npm exec tiangong -- lifecyclemodel orchestrate plan --input ./lifecyclemodel-orchestrate.request.json --out-dir ./artifacts/lifecyclemodel_recursive/<run_id> --json
+npm exec tiangong -- lifecyclemodel build-resulting-process --input ./request.json --json
+npm exec tiangong -- lifecyclemodel publish-resulting-process --run-dir ./runs/example --publish-processes --publish-relations --json
+npm exec tiangong -- review process --run-root ./artifacts/process_from_flow/<run_id> --run-id <run_id> --out-dir ./review --json
+npm exec tiangong -- review flow --rows-file ./flows.json --out-dir ./flow-review --json
+npm exec tiangong -- review lifecyclemodel --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --out-dir ./lifecyclemodel-review --json
+npm exec tiangong -- flow get --id <flow-id> --version <version> --json
+npm exec tiangong -- flow list --id <flow-id> --state-code 100 --limit 20 --json
+npm exec tiangong -- flow remediate --input-file ./invalid-flows.jsonl --out-dir ./flow-remediation --json
+npm exec tiangong -- flow publish-version --input-file ./ready-flows.jsonl --out-dir ./flow-publish --dry-run --json
+npm exec tiangong -- flow publish-reviewed-data --flow-rows-file ./reviewed-flows.jsonl --original-flow-rows-file ./original-flows.jsonl --out-dir ./flow-publish-reviewed --dry-run --json
+npm exec tiangong -- flow build-alias-map --old-flow-file ./old-flows.jsonl --new-flow-file ./new-flows.jsonl --out-dir ./flow-alias-map --json
+npm exec tiangong -- flow scan-process-flow-refs --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-scan --json
+npm exec tiangong -- flow plan-process-flow-repairs --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --scan-findings ./flow-scan/scan-findings.json --out-dir ./flow-repair-plan --json
+npm exec tiangong -- flow apply-process-flow-repairs --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --scan-findings ./flow-scan/scan-findings.json --out-dir ./flow-repair-apply --json
+npm exec tiangong -- flow regen-product --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-regen --apply --json
+npm exec tiangong -- flow validate-processes --original-processes-file ./before.jsonl --patched-processes-file ./after.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-validate --json
+npm exec tiangong -- publish run --input ./examples/publish-run.request.json --dry-run
+npm exec tiangong -- validation run --input-dir ./tidas-package --engine auto
+npm exec tiangong -- admin embedding-run --input ./jobs.json --dry-run
 ```
 
 ## process / review / publish / validation 边界
@@ -296,7 +312,7 @@ npm start -- admin embedding-run --input ./jobs.json --dry-run
 - `execute`：只调用原生 CLI builder slices，记录 `invocations/*.json` 与执行汇总
 - `publish`：重开一个已有 orchestrator run，汇总上游本地产物并输出 `publish-bundle.json`、`publish-summary.json`
 
-这个命令明确不再保留 Python fallback。`process_builder.mode=langgraph` 和 `process_builder.python_bin` 都已经被视为移除配置，不属于支持输入面。
+这个命令的 `process_builder` 请求面已经收窄到 CLI-native 本地构建字段集合；额外的旧 builder 控制项会在请求归一化阶段直接被拒绝，不再保留任何 Python fallback 配置面。
 
 `tiangong review process` 现在也已经进入可执行状态，负责：
 
@@ -515,11 +531,12 @@ npm run prepush:gate
 
 说明：
 
-- `npm run lint` 会执行 `eslint`、deprecated API 检查、`prettier --check` 和 `tsc`
+- `npm run lint` 会执行 `eslint`、deprecated API 检查、coverage-ignore 守卫、`prettier --check` 和 `tsc`
 - `npm run prettier` 用于实际改写格式
 - `npm test` 包含普通单元测试和 `bin` / 入口 smoke test
 - `npm run test:coverage` 对 `src/**/*.ts` 执行 100% 覆盖率门
 - `npm run prepush:gate` 是提交前的完整质量门
+- 不允许通过 `c8 ignore` / `istanbul ignore` / `v8 ignore` 这类 pragma 规避覆盖率；边缘情况必须在测试里覆盖
 
 ## 构建项目
 
@@ -531,17 +548,18 @@ npm run build
 
 ## 可执行入口
 
-仓库内有两个稳定入口：
+仓库内当前统一推荐三个稳定入口：
 
-- `npm start -- ...`
+- `npm exec tiangong -- ...`
 - `node ./bin/tiangong.js ...`
 - `node ./dist/src/main.js ...`
 
 其中：
 
-- `npm start -- ...` 会先构建再运行
+- `npm exec tiangong -- ...` 直接走 `package.json` 里的 `bin.tiangong`
 - `node ./bin/tiangong.js ...` 会加载 `dist/src/main.js`
-- `package.json` 也声明了 `bin.tiangong`，所以在本仓库内可直接通过 `npm exec tiangong -- ...` 调用
+- `node ./dist/src/main.js ...` 适合调试编译后的真实 runtime
+- `npm start -- ...` 仍然可用，但本质是“先构建再运行”的开发便利脚本
 
 ## 与 skills 的联动约定
 

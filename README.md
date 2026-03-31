@@ -72,29 +72,42 @@ The repository enforces:
 - `npm run test:coverage:assert-full`
 - `npm run prepush:gate`
 
-`npm run lint` is the required local gate. It runs `eslint`, deprecated API diagnostics, `prettier --check`, and `tsc`. Coverage is enforced at 100% for `src/**/*.ts`. Launcher smoke tests remain in the normal test suite.
+`npm run lint` is the required local gate. It runs `eslint`, deprecated API diagnostics, `prettier --check`, a coverage-ignore guard, and `tsc`. Coverage is enforced at 100% for `src/**/*.ts`. Launcher smoke tests remain in the normal test suite, and coverage-ignore pragmas are forbidden as a substitute for test coverage.
 
 ## Quick start
 
-```bash
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+Install Node.js `24.x` with any platform-native path you already use. The CLI only requires a working Node 24 runtime; it does not depend on `bash`, `nvm`, or other Unix-only setup tools. Examples that work well:
 
-nvm install
-nvm alias default 24
-nvm use
-
-npm install
-
-npm update && npm ci
-```
-
-Create `.env`:
+- Windows: the official Node.js `24.x` installer
+- macOS: the official Node.js `24.x` installer, `fnm`, or `nvm`
+- Linux: your preferred Node 24 package/install method
 
 ```bash
-cp .env.example .env
+npm ci
+npm run build
 ```
 
-Current CLI env contract:
+Initialize `.env` by duplicating `.env.example` to `.env` with your editor or file manager. Any equivalent copy action is fine on macOS, Linux, or Windows.
+
+Recommended cross-platform launchers:
+
+- `npm exec tiangong -- ...`
+- `node ./bin/tiangong.js ...`
+- `node ./dist/src/main.js ...`
+
+`npm start -- ...` is still available for local CLI development, but it is a rebuild-and-run convenience wrapper rather than the canonical public entrypoint.
+
+Repository-local quality gate:
+
+```bash
+npm run lint
+npm test
+npm run test:coverage
+npm run test:coverage:assert-full
+npm run prepush:gate
+```
+
+Current public CLI env contract:
 
 ```bash
 TIANGONG_LCA_API_BASE_URL=
@@ -108,6 +121,21 @@ Optional env that only applies to implemented commands which opt into semantic r
 TIANGONG_LCA_LLM_BASE_URL=
 TIANGONG_LCA_LLM_API_KEY=
 TIANGONG_LCA_LLM_MODEL=
+```
+
+Internal/preparatory env surface already normalized in the repo, but not consumed by any current public `tiangong` command:
+
+```bash
+TIANGONG_LCA_KB_SEARCH_API_BASE_URL=
+TIANGONG_LCA_KB_SEARCH_API_KEY=
+TIANGONG_LCA_KB_SEARCH_REGION=us-east-1
+
+TIANGONG_LCA_UNSTRUCTURED_API_BASE_URL=
+TIANGONG_LCA_UNSTRUCTURED_API_KEY=
+TIANGONG_LCA_UNSTRUCTURED_PROVIDER=
+TIANGONG_LCA_UNSTRUCTURED_MODEL=
+TIANGONG_LCA_UNSTRUCTURED_CHUNK_TYPE=false
+TIANGONG_LCA_UNSTRUCTURED_RETURN_TXT=true
 ```
 
 Command-level env reality:
@@ -145,43 +173,43 @@ Command-level env reality:
 | `publish run` | none |
 | `validation run` | none |
 
-This CLI does not currently require KB, TianGong unstructured service, MCP, or `OPENAI_*` env keys. Optional semantic review now goes through the canonical `TIANGONG_LCA_LLM_*` keys instead of legacy provider-specific names. The repo already contains internal helper modules for future KB and TianGong unstructured integrations, but no public command consumes those env keys yet, so they are intentionally absent from `.env.example`.
+This CLI does not currently require KB, TianGong unstructured service, MCP, or `OPENAI_*` env keys for any public command. Optional semantic review now goes through the canonical `TIANGONG_LCA_LLM_*` keys instead of legacy provider-specific names. The repo already contains internal helper modules for KB and TianGong unstructured integrations; their env keys are listed in `.env.example` as internal/preparatory only, not as a public command contract.
 
 Run the CLI:
 
 ```bash
-npm start -- --help
-npm start -- doctor
-npm start -- doctor --json
-npm start -- search flow --input ./request.json --dry-run
-npm start -- process get --id <process-id> --version <version> --json
-npm start -- process auto-build --input ./examples/process-auto-build.request.json --json
-npm start -- process resume-build --run-id <run-id> --json
-npm start -- process publish-build --run-id <run-id> --json
-npm start -- process batch-build --input ./examples/process-batch-build.request.json --json
-npm start -- lifecyclemodel auto-build --input ./examples/lifecyclemodel-auto-build.request.json --json
-npm start -- lifecyclemodel validate-build --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --json
-npm start -- lifecyclemodel publish-build --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --json
-npm start -- lifecyclemodel orchestrate plan --input ./lifecyclemodel-orchestrate.request.json --out-dir ./artifacts/lifecyclemodel_recursive/<run_id> --json
-npm start -- lifecyclemodel build-resulting-process --input ./request.json --json
-npm start -- lifecyclemodel publish-resulting-process --run-dir ./runs/example --publish-processes --publish-relations --json
-npm start -- review process --run-root ./artifacts/process_from_flow/<run_id> --run-id <run_id> --out-dir ./review --json
-npm start -- review flow --rows-file ./flows.json --out-dir ./flow-review --json
-npm start -- review lifecyclemodel --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --out-dir ./lifecyclemodel-review --json
-npm start -- flow get --id <flow-id> --version <version> --json
-npm start -- flow list --id <flow-id> --state-code 100 --limit 20 --json
-npm start -- flow remediate --input-file ./invalid-flows.jsonl --out-dir ./flow-remediation --json
-npm start -- flow publish-version --input-file ./ready-flows.jsonl --out-dir ./flow-publish --dry-run --json
-npm start -- flow publish-reviewed-data --flow-rows-file ./reviewed-flows.jsonl --original-flow-rows-file ./original-flows.jsonl --out-dir ./flow-publish-reviewed --dry-run --json
-npm start -- flow build-alias-map --old-flow-file ./old-flows.jsonl --new-flow-file ./new-flows.jsonl --out-dir ./flow-alias-map --json
-npm start -- flow scan-process-flow-refs --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-scan --json
-npm start -- flow plan-process-flow-repairs --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --scan-findings ./flow-scan/scan-findings.json --out-dir ./flow-repair-plan --json
-npm start -- flow apply-process-flow-repairs --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --scan-findings ./flow-scan/scan-findings.json --out-dir ./flow-repair-apply --json
-npm start -- flow regen-product --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-regen --apply --json
-npm start -- flow validate-processes --original-processes-file ./before.jsonl --patched-processes-file ./after.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-validate --json
-npm start -- publish run --input ./examples/publish-run.request.json --dry-run
-npm start -- validation run --input-dir ./tidas-package --engine auto
-npm start -- admin embedding-run --input ./jobs.json --dry-run
+npm exec tiangong -- --help
+npm exec tiangong -- doctor
+npm exec tiangong -- doctor --json
+npm exec tiangong -- search flow --input ./request.json --dry-run
+npm exec tiangong -- process get --id <process-id> --version <version> --json
+npm exec tiangong -- process auto-build --input ./examples/process-auto-build.request.json --json
+npm exec tiangong -- process resume-build --run-id <run-id> --json
+npm exec tiangong -- process publish-build --run-id <run-id> --json
+npm exec tiangong -- process batch-build --input ./examples/process-batch-build.request.json --json
+npm exec tiangong -- lifecyclemodel auto-build --input ./examples/lifecyclemodel-auto-build.request.json --json
+npm exec tiangong -- lifecyclemodel validate-build --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --json
+npm exec tiangong -- lifecyclemodel publish-build --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --json
+npm exec tiangong -- lifecyclemodel orchestrate plan --input ./lifecyclemodel-orchestrate.request.json --out-dir ./artifacts/lifecyclemodel_recursive/<run_id> --json
+npm exec tiangong -- lifecyclemodel build-resulting-process --input ./request.json --json
+npm exec tiangong -- lifecyclemodel publish-resulting-process --run-dir ./runs/example --publish-processes --publish-relations --json
+npm exec tiangong -- review process --run-root ./artifacts/process_from_flow/<run_id> --run-id <run_id> --out-dir ./review --json
+npm exec tiangong -- review flow --rows-file ./flows.json --out-dir ./flow-review --json
+npm exec tiangong -- review lifecyclemodel --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --out-dir ./lifecyclemodel-review --json
+npm exec tiangong -- flow get --id <flow-id> --version <version> --json
+npm exec tiangong -- flow list --id <flow-id> --state-code 100 --limit 20 --json
+npm exec tiangong -- flow remediate --input-file ./invalid-flows.jsonl --out-dir ./flow-remediation --json
+npm exec tiangong -- flow publish-version --input-file ./ready-flows.jsonl --out-dir ./flow-publish --dry-run --json
+npm exec tiangong -- flow publish-reviewed-data --flow-rows-file ./reviewed-flows.jsonl --original-flow-rows-file ./original-flows.jsonl --out-dir ./flow-publish-reviewed --dry-run --json
+npm exec tiangong -- flow build-alias-map --old-flow-file ./old-flows.jsonl --new-flow-file ./new-flows.jsonl --out-dir ./flow-alias-map --json
+npm exec tiangong -- flow scan-process-flow-refs --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-scan --json
+npm exec tiangong -- flow plan-process-flow-repairs --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --scan-findings ./flow-scan/scan-findings.json --out-dir ./flow-repair-plan --json
+npm exec tiangong -- flow apply-process-flow-repairs --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --scan-findings ./flow-scan/scan-findings.json --out-dir ./flow-repair-apply --json
+npm exec tiangong -- flow regen-product --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-regen --apply --json
+npm exec tiangong -- flow validate-processes --original-processes-file ./before.jsonl --patched-processes-file ./after.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-validate --json
+npm exec tiangong -- publish run --input ./examples/publish-run.request.json --dry-run
+npm exec tiangong -- validation run --input-dir ./tidas-package --engine auto
+npm exec tiangong -- admin embedding-run --input ./jobs.json --dry-run
 ```
 
 ## Process build scaffold
@@ -216,7 +244,7 @@ The current lifecyclemodel build family intentionally keeps three boundaries out
 
 `tiangong lifecyclemodel build-resulting-process` remains local-first, but it no longer hard-fails when a request explicitly enables `process_sources.allow_remote_lookup`. In that mode the CLI derives a deterministic Supabase REST read path from `TIANGONG_LCA_API_BASE_URL`, resolves missing process datasets by exact `id/version` with a latest-version fallback, and keeps the same local artifact contract instead of routing through MCP or semantic search.
 
-`tiangong lifecyclemodel orchestrate` is the native recursive assembly command for multi-node product-system runs. `plan` writes `assembly-plan.json`, `graph-manifest.json`, `lineage-manifest.json`, and `boundary-report.json`; `execute` invokes only native CLI-backed builder slices and records per-invocation results under `invocations/`; `publish` reopens one orchestrator run and prepares `publish-bundle.json` plus `publish-summary.json` from prior local artifacts. Legacy `process_builder.mode=langgraph` and `process_builder.python_bin` are rejected; there is no Python fallback path.
+`tiangong lifecyclemodel orchestrate` is the native recursive assembly command for multi-node product-system runs. `plan` writes `assembly-plan.json`, `graph-manifest.json`, `lineage-manifest.json`, and `boundary-report.json`; `execute` invokes only native CLI-backed builder slices and records per-invocation results under `invocations/`; `publish` reopens one orchestrator run and prepares `publish-bundle.json` plus `publish-summary.json` from prior local artifacts. The `process_builder` request surface is now intentionally narrow: only CLI-native local-build fields are accepted, and extra builder knobs are rejected during request normalization.
 
 `tiangong review process` is the first migrated review slice. It reopens one local `process_from_flow` run under `exports/processes/`, replays the existing artifact-first review contract, writes bilingual markdown findings plus structured JSON reports, and keeps optional semantic review behind the CLI-owned `TIANGONG_LCA_LLM_*` abstraction instead of direct `OPENAI_*` calls in a skill script.
 

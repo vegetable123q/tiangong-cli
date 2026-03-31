@@ -234,7 +234,7 @@ test('flow regen-product helper assertions and sdk resolution cover local file a
       ),
       { ok: true },
     );
-    assert.match(__testInternals.resolveCliRepoRoot(), /tiangong-lca-cli/u);
+    assert.equal(__testInternals.resolveCliRepoRoot(), path.resolve(process.cwd()));
     assert.equal(__testInternals.buildSdkCandidates()[0], '@tiangong-lca/tidas-sdk/core');
 
     assert.throws(

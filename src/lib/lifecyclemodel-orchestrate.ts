@@ -50,11 +50,9 @@ type Candidate = JsonRecord & {
 };
 
 type ProcessBuilderConfig = {
-  mode: 'workflow' | 'langgraph';
   flow_file: string | null;
   flow_json: unknown;
   run_id: string | null;
-  python_bin: string | null;
   publish: boolean;
   commit: boolean;
   forward_args: string[];
@@ -357,6 +355,25 @@ function requireObject(value: unknown, label: string): JsonRecord {
   return value;
 }
 
+function requireKnownKeys(value: JsonRecord, allowed: readonly string[], label: string): void {
+  const unsupported = Object.keys(value)
+    .filter((key) => !allowed.includes(key))
+    .sort();
+  if (unsupported.length === 0) {
+    return;
+  }
+
+  throw new CliError(`${label} contains unsupported field(s): ${unsupported.join(', ')}.`, {
+    code: 'LIFECYCLEMODEL_ORCHESTRATE_INVALID_REQUEST',
+    exitCode: 2,
+    details: {
+      label,
+      unsupported_fields: unsupported,
+      allowed_fields: [...allowed],
+    },
+  });
+}
+
 function requireEnum<T extends string>(value: unknown, allowed: readonly T[], label: string): T {
   const normalized = nonEmptyString(value);
   if (!normalized || !allowed.includes(normalized as T)) {
@@ -530,12 +547,16 @@ function normalizeProcessBuilderConfig(
     return undefined;
   }
 
+  requireKnownKeys(
+    value,
+    ['flow_file', 'flow_json', 'run_id', 'publish', 'commit', 'forward_args'],
+    'process_builder',
+  );
+
   return {
-    mode: requireEnum(value.mode ?? 'workflow', ['workflow', 'langgraph'], 'process_builder.mode'),
     flow_file: resolveInputPath(baseDir, value.flow_file),
     flow_json: value.flow_json,
     run_id: nonEmptyString(value.run_id),
-    python_bin: nonEmptyString(value.python_bin),
     publish: Boolean(value.publish),
     commit: Boolean(value.commit),
     forward_args: ensureList(value.forward_args)
@@ -1538,25 +1559,6 @@ async function executeProcessBuilderInvocation(
   now: Date,
 ): Promise<InvocationExecutionResult> {
   const config = invocation.config;
-  if (nonEmptyString(config.python_bin)) {
-    throw new CliError(
-      `Invocation ${invocation.invocation_id} still requests process_builder.python_bin, which is removed from the CLI-only path.`,
-      {
-        code: 'LIFECYCLEMODEL_ORCHESTRATE_LEGACY_CONFIG',
-        exitCode: 2,
-      },
-    );
-  }
-  if (config.mode === 'langgraph') {
-    throw new CliError(
-      `Invocation ${invocation.invocation_id} still requests process_builder.mode=langgraph, which is removed from the CLI-only path.`,
-      {
-        code: 'LIFECYCLEMODEL_ORCHESTRATE_LEGACY_CONFIG',
-        exitCode: 2,
-      },
-    );
-  }
-
   const requestsDir = path.join(plan.artifacts.invocations_dir, 'requests');
   const slug = safeSlug(invocation.invocation_id);
   let flowFile = nonEmptyString(config.flow_file);

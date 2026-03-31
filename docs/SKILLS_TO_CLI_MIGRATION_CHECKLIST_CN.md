@@ -1,258 +1,179 @@
-# TianGong Skills -> CLI 迁移清单
+# TianGong Skills -> CLI 迁移清单（审计修订版）
 
-## 1. 最终结论
+这份文档替代上一版“迁移已全部完成”的口径。
 
-这轮迁移已经固定成一个明确结果：
+当前更准确的判断是：
 
-- `tiangong-lca-cli` 是唯一执行入口
-- 业务执行逻辑以 TypeScript / Node 24 为主，收敛到 CLI
-- `tiangong-lca-skills` 只保留 `SKILL.md`、参考文档、示例输入、原生 Node `.mjs` 薄 wrapper
-- Python、MCP、shell 兼容壳、私有 env parsing 都不再是 supported path
+- `tiangong-lca-cli` 和 `tiangong-lca-skills` 的主运行时路径，已经基本收敛到 TypeScript / Node + `tiangong` CLI
+- 但仓库治理、开发质量门、文档和跨平台验证还没有完全收口
+- 因此现在还不能把这项工作标记为“已经彻底脱离 Python 和无法跨平台的 shell”
 
-MCP 替代策略也已经固定，不再反复讨论：
+这份文档记录的是：
 
-- 策略 1：直接调用 `tiangong-lca-edge-functions` 的 Edge Function / REST
-- 策略 2：直接访问 Supabase；复杂 CRUD 走官方 Supabase JS SDK，窄读路径允许 deterministic REST
+- 已经确认完成的部分
+- 还没有完成的阻塞项
+- 一份可以按顺序执行、可以验收的整改 TODO
 
-这份文档现在记录的是“迁移已完成后的完成态”，不是待做路线图。
+## 1. 审计后现状
 
-## 2. 硬规则
+### 1.1 已确认成立
 
-- [x] 不再新增任何 Python 业务 workflow
-- [x] 不再新增任何 skill 自带 HTTP / MCP / env parsing
-- [x] 不再新增任何基于 MCP 的 CLI 内部传输层
-- [x] 不再新增任何 shell 兼容壳 wrapper；canonical wrapper 统一为原生 Node `.mjs`
-- [x] 所有新能力必须先定义成 `tiangong <noun> <verb>` 命令，再实现
-- [x] `tiangong-lca-skills` 中的 wrapper 只能调用 `tiangong`
-- [x] CLI 的 env 只按真实已实现命令暴露，不预埋未来猜测接口
-- [x] CLI 内部不再保留 “MCP 传输层” 作为技术路径
+- [x] `tiangong-lca-cli` 的稳定入口是 Node：`bin/tiangong.js` -> `dist/src/main.js`
+- [x] `tiangong-lca-skills` 当前保留的 wrapper 入口都是原生 Node `.mjs`
+- [x] skills wrapper 当前的 canonical 路径是 `wrapper -> tiangong`
+- [x] 两个仓库当前没有现存的 `.py` 或 `.sh` 运行时文件
+- [x] 业务 Python runtime、shell shim、MCP transport 已不再是主执行路径
+- [x] `tiangong-lca-cli` 已把 `.env.example`、README、`DEV_CN.md` 收敛成 public / optional / internal-preparatory 三层 env 说明
+- [x] `tiangong-lca-cli` 的本地 coverage 路径已改成 Node-only 脚本，不再依赖 POSIX 风格内联 env 赋值
+- [x] `tiangong-lca-cli` 已增加 coverage-ignore 守卫，并明确禁止用 ignore pragma 逃避测试覆盖
 
-## 3. Repo 边界
+### 1.2 还没有完成
 
-### 3.1 `tiangong-lca-cli`
+- [ ] `tiangong-lca-cli` 的质量门脚本还没有做到真正跨平台
+- [ ] CLI 和 skills 的公开文档仍然默认读者处在 Unix / POSIX shell 环境
+- [ ] `tiangong-lca-skills` 的治理文档还保留 Python 初始化流程残影
+- [ ] 部分参考文档和兼容层还保留 legacy Python 字段或脚本名
+- [ ] “测试全绿 + 100% 覆盖率” 还没有形成跨平台、可自动验证的统一门禁
+- [ ] 目前缺少足够的跨平台 CI 证据来支撑“完全脱离”的结论
 
-唯一执行面，负责：
+## 2. “完全脱离” 的完成定义
 
-- 命令树
-- 参数解析
-- env 合同
-- REST / Edge Function / Supabase 访问
-- 本地运行态与 artifact 契约
-- 测试、lint、100% 覆盖率质量门
+只有下面全部满足，才可以把这项工作改回完成态：
 
-### 3.2 `tiangong-lca-skills`
+- [ ] 两个仓库都不再要求 Python 作为运行时、脚手架或维护工具前提
+- [ ] `npm` / `node` 的核心质量门命令在 macOS、Linux、Windows 上都可直接运行
+- [ ] `.env.example`、README、`DEV_CN.md` 与真实公开 env contract 完全一致，并明确区分 required / optional / internal-only
+- [ ] 默认文档不再把 `bash` / `cp` / `/tmp` / `nvm` 作为唯一可用路径
+- [ ] skills 的治理与校验流程不再要求或暗示 Python 初始化器
+- [ ] 公开 contract 和示例不再把 Python legacy 字段写成“当前输入面的一部分”
+- [ ] CLI 和 skills 不兼容任何 legacy Python 输入面；不保留 Python fallback、兼容别名、兼容归一化层或“先读进来再拒绝”的兼容解析
+- [ ] 仓库不允许通过 `c8 ignore`、`istanbul ignore` 或同类 pragma 跳过未覆盖分支；边缘分支必须用测试覆盖
+- [ ] `npm test`、`npm run test:coverage`、`npm run test:coverage:assert-full`、`npm run prepush:gate` 形成统一的本地与 CI 门禁，并以 100% 覆盖率为硬要求
+- [ ] 有 CI 或等价自动化证据证明 CLI 与 skills wrapper 至少在 Linux + Windows 上可执行
+- [ ] 只有在完成上面所有项后，文档才允许重新使用“迁移已全部完成”或“已经彻底脱离”这类表述
 
-只负责：
+## 3. 推荐执行顺序
 
-- `SKILL.md`
-- 使用说明
-- 示例输入
-- 原生 Node `.mjs` wrapper
-- 对 `tiangong` 的薄调用
+按下面顺序做，返工最少：
 
-不再负责：
+1. 先修 `tiangong-lca-cli` 的跨平台质量门脚本
+2. 再补 CLI / skills 的跨平台 CI
+3. 然后修公开文档里的 Unix-only 指令
+4. 再清 skills 治理文档和参考文档里的 Python 残留
+5. 最后移除 CLI 里的 legacy Python 兼容面
+6. 重新跑一次审计扫描和 smoke test
 
-- transport
-- CRUD 逻辑
-- env 合同
-- LLM / KB / OCR / publish 主逻辑
-- 独立 workflow runtime
+## 4. 可执行 TODO
 
-### 3.3 `tidas-sdk` / `tidas-tools`
+### Phase 1：修复 CLI 的跨平台质量门
 
-继续作为库层存在：
+当前状态：已完成本地脚本与文档收口；Windows / CI 证明仍待 Phase 6 完成。
 
-- CLI 直接消费 `tidas-sdk` 的本地 validation/parity 能力，并按需保留 `tidas-tools` 的其他库层职责
-- skills 不再重复实现一遍
-- CLI 不手抄 schema / validation / export 逻辑
+- [x] 补全 `.env.example`，并让它和真实 env contract 对齐当前阻塞：`.env.example` 只列出了 API / LLM 变量，但代码里还存在 `TIANGONG_LCA_KB_SEARCH_*`、`TIANGONG_LCA_UNSTRUCTURED_*` 等 env 面处理目标：先按“公开命令实际消费”与“内部预备模块保留”做分类，再决定哪些 env 必须进入 `.env.example`，哪些应进入单独的 advanced/internal 文档最低要求：不能继续出现“代码里真实使用，但 `.env.example` 和 README / DEV 完全看不见”的 env 涉及文件：`tiangong-lca-cli/.env.example` 涉及文件：`tiangong-lca-cli/README.md` 涉及文件：`tiangong-lca-cli/DEV_CN.md` 涉及文件：`tiangong-lca-cli/src/lib/env.ts` 涉及文件：`tiangong-lca-cli/src/lib/llm.ts` 涉及文件：`tiangong-lca-cli/src/lib/kb-search.ts` 涉及文件：`tiangong-lca-cli/src/lib/unstructured.ts` 验收标准：一个维护者只看 `.env.example` 和 README / DEV，就能知道当前公开支持的 env、可选 env，以及哪些 env 只是内部预备面已完成：`.env.example`、README、`DEV_CN.md` 已补上 public / optional / internal-preparatory 的明确分层
 
-## 4. 当前 Skill 映射
+- [x] 把 `test:coverage` 从内联环境变量赋值改成跨平台实现当前阻塞：`package.json` 里使用 `TIANGONG_LCA_COVERAGE=1 c8 ...` 推荐做法：新增一个 Node 自己的启动脚本，在脚本里设置 env 后再调用测试进程；不要默认引入新 npm 依赖涉及文件：`tiangong-lca-cli/package.json` 涉及文件：`tiangong-lca-cli/scripts/*` 验收标准：`npm run test:coverage` 在 Windows `cmd` / PowerShell 下也能直接通过已完成：`package.json` 已改成 `node ./scripts/run-test-coverage.cjs`，本地 coverage 和 100% 断言已通过
 
-| Skill | Canonical 调用链 | 当前状态 | 说明 |
-| --- | --- | --- | --- |
-| `flow-hybrid-search` | `node wrapper (.mjs) -> tiangong search flow` | 已完成 | 薄 wrapper 模板 |
-| `process-hybrid-search` | `node wrapper (.mjs) -> tiangong search process` | 已完成 | 薄 wrapper 模板 |
-| `lifecyclemodel-hybrid-search` | `node wrapper (.mjs) -> tiangong search lifecyclemodel` | 已完成 | 薄 wrapper 模板 |
-| `embedding-ft` | `node wrapper (.mjs) -> tiangong admin embedding-run` | 已完成 | 薄 wrapper 模板 |
-| `process-automated-builder` | `node wrapper (.mjs) -> tiangong process auto-build / resume-build / publish-build / batch-build` | 已完成当前 CLI 收口 | skill 侧已无 Python / LangGraph / MCP fallback |
-| `lifecyclemodel-automated-builder` | `node wrapper (.mjs) -> tiangong lifecyclemodel auto-build / validate-build / publish-build` | 已完成当前 CLI 收口 | discovery / AI 选择若未来需要，按新的 CLI 特性处理，不再算遗留债务 |
-| `lifecyclemodel-resulting-process-builder` | `node wrapper (.mjs) -> tiangong lifecyclemodel build-resulting-process / publish-resulting-process` | 已完成 | resulting-process 模板 |
-| `lifecycleinventory-review` | `node wrapper (.mjs) -> tiangong review process / review lifecyclemodel` | 已完成 | review 入口已经完全走原生 CLI |
-| `flow-governance-review` | `node wrapper (.mjs) -> tiangong review flow / flow ...` | 已完成当前 CLI 收口 | reviewed publish、repair、regen、validate 均已进入 CLI |
-| `lifecyclemodel-recursive-orchestrator` | `node wrapper (.mjs) -> tiangong lifecyclemodel orchestrate` | 已完成 | plan / execute / publish-handoff 已原生化 |
-| `lca-publish-executor` | `node wrapper (.mjs) -> tiangong publish run` | 已完成 | 不再保留私有 publish Python contract |
+- [x] 明确禁止用 `c8 ignore` / `istanbul ignore` 一类 pragma 绕过覆盖率当前状态：这轮扫描没有发现现存 ignore pragma，但仓库还没有把这条规则固化成文档门禁和自动检查处理目标：把“边缘情况必须在 test 里覆盖，而不是靠 coverage ignore 跳过”写成明确规则，并在需要时加一个扫描脚本或 lint 检查涉及文件：`tiangong-lca-cli/AGENTS.md` 涉及文件：`tiangong-lca-cli/README.md` 涉及文件：`tiangong-lca-cli/DEV_CN.md` 涉及文件：`tiangong-lca-cli/package.json` 涉及文件：`tiangong-lca-cli/scripts/*` 验收标准：仓库规则明确禁止 coverage ignore；若有人新增 ignore pragma，会在本地或 CI 直接失败已完成：已新增 `scripts/assert-no-coverage-ignore.cjs`，并接入 `npm run lint`
 
-## 5. 迁移完成清单
+- [x] 确认 `prepush:gate` 只依赖跨平台命令当前要求：`prepush:gate` 依赖 `test:coverage` 处理目标：`npm run prepush:gate` 不再因为 shell 语法差异在 Windows 失败涉及文件：`tiangong-lca-cli/package.json` 验收标准：`npm run prepush:gate` 在至少 Linux + Windows 两个平台上跑通已完成：本地门禁链条已全部转成 `npm` / `node` / `tsx` 路径；Windows 真实验证留给 Phase 6 的 OS matrix
 
-### Phase 0：冻结旧世界
+- [ ] 把“测试全绿 + 100% 覆盖率” 固化为唯一通过门槛当前状态：本地文档和 `prepush:gate` 已经表达了这个方向，但还没有在跨平台 CI 里形成稳定、可见、不可绕过的统一门禁处理目标：明确以下四个命令的角色并接入门禁： `npm test` `npm run test:coverage` `npm run test:coverage:assert-full` `npm run prepush:gate` 要求：所有测试必须通过，且 `src/**/*.ts` 维持 lines / statements / functions / branches 全部 100% 涉及文件：`tiangong-lca-cli/package.json` 涉及文件：`tiangong-lca-cli/AGENTS.md` 涉及文件：`tiangong-lca-cli/README.md` 涉及文件：`tiangong-lca-cli/DEV_CN.md` 涉及文件：`tiangong-lca-cli/scripts/assert-full-coverage.ts` 验收标准：本地与 CI 都以“测试全绿 + 严格 100% 覆盖率”作为硬门禁，不存在只跑部分测试或只看松散 coverage summary 的路径当前进展：本地 `npm test`、`npm run test:coverage`、`npm run test:coverage:assert-full`、`npm run prepush:gate` 已全部通过；2026-03-31 已把 coverage 断言收敛到 CLI 自有 `src` 文件集合，并在本地按 CI 方式 checkout/build `.ci/tidas-sdk` 后再次执行 `TIANGONG_LCA_TIDAS_SDK_DIR=$PWD/.ci/tidas-sdk npm run test:coverage`、`npm run test:coverage:assert-full`、`npm run prepush:gate` 全部通过且维持 100% 覆盖率；repo-local CI workflow 也已接入这些门禁，等待远端 matrix 结果作为最终证据
 
-- [x] 新需求默认先定义 CLI 命令，而不是先写 skill 脚本
-- [x] 不再新增 Python workflow、MCP client、独立 env parser
-- [x] “skills 最终只保留文档、示例、薄 wrapper” 已写进仓库文档
+- [ ] 为覆盖率质量门补一个最小的 Windows 回归验证处理目标：避免后续有人把 POSIX-only 语法重新加回 `package.json` 涉及文件：`tiangong-lca-cli/.github/workflows/*` 或等价 CI 所在位置验收标准：CI 中存在明确的 Windows 任务覆盖 `npm run test:coverage` 当前进展：已新增 repo-local workflow，在 `windows-latest` 上显式运行 `npm run test:coverage`、`npm run test:coverage:assert-full` 和 `npm run prepush:gate`
 
-### Phase 1：让 CLI 成为诚实入口
+### Phase 2：补齐 CLI 的跨平台文档
 
-- [x] CLI help 只暴露真实已实现命令，未实现能力明确标为 planned
-- [x] `lifecyclemodel` 已成为正式一级命名空间
-- [x] README / `DEV_CN.md` / 实施指南 / 迁移清单 与真实命令面对齐
+- [x] 重写 `README.md` 的 Quick start 当前阻塞：文档默认使用 `curl ... | bash`、`nvm`、`cp .env.example .env` 处理目标：把“Node 24 安装”和“.env 初始化”改成跨平台表述，而不是只给 bash 命令涉及文件：`tiangong-lca-cli/README.md` 验收标准：一个 Windows 用户不需要自行翻译 shell 命令，也能按文档完成安装并执行 `node ./bin/tiangong.js --help` 已完成：README 已改成“任意平台可用的 Node 24 安装方式 + `npm ci` + `npm run build` + 用编辑器/文件管理器复制 `.env.example`”的主路径，并去掉了 `curl|bash` / `nvm` / `cp` 作为默认入口
 
-### Phase 2：收口薄 remote skills
+- [x] 重写 `DEV_CN.md` 的安装与初始化段落当前阻塞：开发文档同样默认使用 `bash`、`nvm`、`cp` 处理目标：给出平台中立写法，必要时补 macOS/Linux 和 Windows 两组示例涉及文件：`tiangong-lca-cli/DEV_CN.md` 验收标准：文档中不再把 POSIX shell 命令当作唯一入口已完成：`DEV_CN.md` 已改成平台中立的 Node 24 前提说明，并明确 `.env` 初始化不要求 shell 命令翻译
 
-- [x] `flow-hybrid-search` -> `tiangong search flow`
-- [x] `process-hybrid-search` -> `tiangong search process`
-- [x] `lifecyclemodel-hybrid-search` -> `tiangong search lifecyclemodel`
-- [x] `embedding-ft` -> `tiangong admin embedding-run`
-- [x] 这批 wrapper 已固定为原生 Node `.mjs`
-- [x] 技术路径只剩 `skill -> tiangong`
-
-### Phase 3：把 CLI 基础模块变成统一依赖面
-
-- [x] `run` 模块：`run_id`、目录布局、manifest、resume 元数据
-- [x] `artifacts` 模块：统一 JSON / JSONL / audit / report 输出
-- [x] `state-lock` 模块：本地单写者锁
-- [x] `http` / `rest-client` 模块：统一 REST 调用、错误格式、超时与重试
-- [x] `llm` 模块：统一 `TIANGONG_LCA_LLM_*`
-- [x] `kb-search` 模块：作为 CLI 内部预备模块存在，但还没有公开命令消费它
-- [x] `unstructured` 模块：作为 CLI 内部预备模块存在，但还没有公开命令消费它
-- [x] `publish` 模块：统一 dry-run / commit / publish report
-- [x] `validation` 模块：统一本地校验收口，并固定 SDK-owned validation boundary
-
-### Phase 4：迁 resulting-process builder
-
-- [x] `tiangong lifecyclemodel build-resulting-process`
-- [x] `tiangong lifecyclemodel publish-resulting-process`
-- [x] resulting-process 远端 lookup 已改为 deterministic direct-read
-- [x] skill wrapper 已改成纯 CLI 路径
-- [x] Python build / publish 主入口已删除
-
-### Phase 5：统一 publish / validation
-
-- [x] 所有本地校验统一收口到 `tiangong validation run`
-- [x] 所有 publish handoff 统一收口到 `tiangong publish run`
-- [x] `lca-publish-executor` 已收口成 CLI wrapper
-- [x] relation manifest / deferred publish / dry-run / commit 的唯一语义已写进 CLI 文档
-- [x] skills 不再自行判断使用哪个校验器
-
-### Phase 6：迁 `process-automated-builder`
-
-- [x] `tiangong process auto-build`
-- [x] `tiangong process resume-build`
-- [x] `tiangong process publish-build`
-- [x] `tiangong process batch-build`
-- [x] intake / run-id / scaffold / state-lock / publish handoff / batch orchestration 已迁入 CLI
-- [x] skill runtime 中的业务 Python / LangGraph / MCP / OpenAI / KB / TianGong unstructured 依赖已删除
-- [x] 当前 skill 只剩 `skill -> tiangong process ...`
-
-说明：
-
-- 当前 CLI 只保留真实已落地的本地 artifact-first slices
-- 旧的端到端 Python 主链没有被“兼容保留”，而是直接移出 supported path
-- 若未来需要新的远端或 AI 阶段，必须作为新的原生 `tiangong process ...` 命令重建
-
-### Phase 7：迁 `lifecyclemodel-automated-builder`
-
-- [x] `tiangong lifecyclemodel auto-build`
-- [x] `tiangong lifecyclemodel validate-build`
-- [x] `tiangong lifecyclemodel publish-build`
-- [x] 本地 `json_ordered` 组装改为 TS
-- [x] 本地校验统一改为 CLI 调用 `tidas-sdk`
-- [x] publish handoff 改为统一 publish 模块
-- [x] canonical skill 入口切为原生 Node `.mjs` -> CLI
-- [x] 不再保留 shell 兼容壳或 Python / MCP runtime
-
-说明：
-
-- reference-model discovery / AI 选择如果未来要做，属于新的原生 CLI 特性
-- 它不再是“迁移遗留项”，也不应该通过 skill 私有 runtime 补回去
-
-### Phase 8：迁 review / governance
-
-- [x] `lifecycleinventory-review` -> `tiangong review process`
-- [x] `flow-governance-review` 的 review slice -> `tiangong review flow`
-- [x] `flow-governance-review` 的 read / remediate / publish / alias / repair / regen / validate slices 全部进入 `tiangong flow ...`
-- [x] `tiangong flow publish-reviewed-data --commit` 已覆盖 prepared process rows 的远端提交
-- [x] review 输出继续保持本地 artifact-first
-- [x] OpenClaw / dedup / legacy Python orchestration 已从 supported path 中移除
-
-### Phase 9：迁 orchestrator
-
-- [x] `lifecyclemodel-recursive-orchestrator` 已迁成 `tiangong lifecyclemodel orchestrate`
-- [x] `plan | execute | publish` 已原生进入 CLI
-- [x] orchestrator 只编排 CLI-native builder slices，不再承载 Python 业务实现
-- [x] 不再保留 Python orchestrator 作为总入口
-
-### Phase 10：删除遗留层
-
-- [x] 删除 skills 中的业务 Python runtime
-- [x] 删除 skills 中的业务 shell 实现，仅保留原生 Node `.mjs` wrapper
-- [x] 删除 skills 中的 transport / env parsing 逻辑
-- [x] 删除 skills 中的 MCP-only 实现
-- [x] 删除旧 env 名的 runtime 依赖与文档残留
-- [x] 删除对 `TIANGONG_CLI_DIR` 旧变量名的依赖，统一为 `TIANGONG_LCA_CLI_DIR`
-
-## 6. Env 收敛清单
-
-### 6.1 当前 CLI 公开 env
-
-- [x] `TIANGONG_LCA_API_BASE_URL`
-- [x] `TIANGONG_LCA_API_KEY`
-- [x] `TIANGONG_LCA_REGION`
-- [x] `TIANGONG_LCA_LLM_BASE_URL`
-- [x] `TIANGONG_LCA_LLM_API_KEY`
-- [x] `TIANGONG_LCA_LLM_MODEL`
-
-### 6.2 当前 wrapper 约定变量
-
-- [x] `TIANGONG_LCA_CLI_DIR`
-
-### 6.3 已从 runtime / 文档中淘汰的旧命名
-
-- [x] `TIANGONG_API_BASE_URL`
-- [x] `TIANGONG_API_KEY`
-- [x] `TIANGONG_REGION`
-- [x] `TIANGONG_LCA_APIKEY`
-- [x] `SUPABASE_FUNCTIONS_URL`
-- [x] `SUPABASE_FUNCTION_REGION`
-- [x] `OPENAI_*`
-- [x] `LCA_OPENAI_*`
-- [x] `TIANGONG_KB_*`（旧直连命名）
-- [x] `TIANGONG_LCA_REMOTE_*`
-- [x] `TIANGONG_KB_REMOTE_*`
-- [x] `TIANGONG_MINERU_WITH_IMAGE_*`
-- [x] `MINERU_*`
-- [x] `MINERU_WITH_IMAGES_*`
-
-说明：
-
-- `kb-search` / `unstructured` 虽然已经有 CLI 内部模块，但当前没有公开命令消费它们
-- 因此这些 env 不应进入 `.env.example`，也不应该被 skill wrapper 私自解析
-
-## 7. 每个 Skill 的完成定义
-
-一个 skill 在当前架构下只有满足下面条件，才算迁移完成：
-
-- [x] skill 不再直接执行业务 Python
-- [x] skill 不再直接访问 REST / MCP
-- [x] skill 不再解析 env
-- [x] skill 不再持有独立 publish 逻辑
-- [x] skill 只调用统一 `tiangong` 命令
-- [x] 对应 CLI 子命令有测试
-- [x] 对应 CLI 子命令有文档
-- [x] 对应 CLI 子命令纳入 `npm run prepush:gate`
-- [x] 对应 skill 文档已改成 CLI 用法
-
-## 8. 未来原生增量候选（不再算迁移 TODO）
-
-下面这些可以做，但它们已经不是“清遗留”的待办，而是新的产品能力：
-
-- lifecyclemodel 的 discovery / AI 选择逻辑
-- `auth` / `job` 等只有在真实场景出现时才应该补齐的命令面
-- 更深的 KB / TianGong unstructured 能力，前提是先形成稳定的 CLI 业务动作
-
-## 9. 一句话标准
-
-只问一句：
-
-> 一个 agent 要完成工作时，是否只需要知道 `tiangong` 命令树，而不需要知道 skills 内部的 Python、MCP、shell、OpenAI、KB、OCR 实现细节？
-
-当前答案已经是“是”。
+- [x] 统一公开推荐的执行方式处理目标：明确推荐哪几个入口是跨平台稳定入口，例如： `npm exec tiangong -- ...` `node ./bin/tiangong.js ...` `node ./dist/src/main.js ...` 涉及文件：`tiangong-lca-cli/README.md` 涉及文件：`tiangong-lca-cli/DEV_CN.md` 验收标准：README 与开发文档对稳定入口的说法一致已完成：README 与 `DEV_CN.md` 都把 `npm exec tiangong -- ...`、`node ./bin/tiangong.js ...`、`node ./dist/src/main.js ...` 收口为主入口；`npm start -- ...` 降级为开发便利脚本
+
+### Phase 3：清理 skills 仓库里的 Python 治理残留
+
+- [x] 移除 `AGENTS.md` 中对 `init_skill.py` 的依赖性表述当前阻塞：治理文档仍要求“新 skill 优先使用 `init_skill.py` 初始化目录与模板”，但仓库里并不存在这个文件处理目标：改成基于 `skill-creator` 的流程，或改成仓库内真实存在的模板 / 脚本流程涉及文件：`tiangong-lca-skills/AGENTS.md` 验收标准：skills 作者不再需要假设 Python 初始化脚本存在已完成：`AGENTS.md` 已改成 `skill-creator` + 手工目录模板流程，不再要求任何 Python 初始化器
+
+- [x] 扩充 `validate-skills.mjs` 的文档守卫当前已有守卫：`quick_validate.py`、`run_lifecyclemodel_review.py` 处理目标：补上对 `init_skill.py` 这类明确失效引用的检查注意：不要粗暴禁止所有 `python_bin` 字样；“已移除 legacy 字段”的说明可以保留涉及文件：`tiangong-lca-skills/scripts/validate-skills.mjs` 验收标准：新的失效 Python 引用会被校验脚本直接拦住已完成：`validate-skills.mjs` 已补 `AGENTS.md` / README / assets / historical-doc 守卫，并允许保留明确的 removed-legacy 说明
+
+- [x] 重新跑一遍 skills 校验并固定为必过门槛命令：`node scripts/validate-skills.mjs` 涉及文件：`tiangong-lca-skills/scripts/validate-skills.mjs` 验收标准：修完治理文档后，skills 仓库能无告警通过校验已完成：本地执行 `node scripts/validate-skills.mjs` 已通过，结果为 `Validated 11 skill directories, 11 wrapper scripts, 1 targeted smokes, and 16 doc guards.`
+
+### Phase 4：清理 skills 参考文档里的 Python / POSIX 公开残留
+
+- [x] 清理或重写还把 Python 工具写成当前路径的参考文档已知例子：`lifecyclemodel-automated-builder/references/source-analysis.md` 里仍写有 `validate.py` 处理目标：如果只是历史背景，就显式标为“上游历史实现”；如果是当前指引，就改成当前 CLI / SDK 路径涉及文件：`tiangong-lca-skills/lifecyclemodel-automated-builder/references/source-analysis.md` 验收标准：用户不会把这类文档理解成“现在仍要回到 Python 工具链”已完成：文档已把 `validate.py` 改成显式 historical note，并强调当前执行路径仍是 CLI / SDK
+
+- [x] 检查所有 user-facing 示例里的 Unix 临时路径已知例子：`/tmp/...`、`file:///tmp/...` 处理目标：公开示例尽量改成平台中立占位符，如 `<temp-dir>` 或 `<workspace-temp-dir>` 说明：测试代码里的 `/tmp` 字面量可以保留；只修用户会照抄的示例和文档涉及文件：`tiangong-lca-skills/**/assets/*` 涉及文件：`tiangong-lca-skills/README.md` 涉及文件：`tiangong-lca-skills/README.zh-CN.md` 验收标准：公开文档和样例不再暗示只有 Unix 才能运行已完成：README / README.zh-CN 的全局安装路径已改成平台解析说明，公开示例中的 `/tmp` / `file:///tmp` 已换成 `<workspace-temp-dir>` 占位符
+
+- [x] 保留“legacy 已移除”的说明，但压缩到明确的历史兼容段处理目标：像 `python_bin`、`langgraph` 这类内容，只在“已移除字段”一节出现，不在主路径说明中反复出现涉及文件：`tiangong-lca-skills/**/*` 验收标准：读者先看到的是当前 Node / CLI 路径，而不是历史 Python 路径已完成：仓库扫描后，这类词只剩在 `lifecyclemodel-recursive-orchestrator` 的 removed-legacy guardrail 段落中出现，不再占据主路径说明
+
+### Phase 5：移除 CLI 中的 legacy Python 兼容面
+
+- [x] 盘点 CLI 中所有 `python_bin` / `langgraph` 相关类型、解析、测试和文档当前状态：CLI 仍会显式拒绝这些 legacy 字段，但类型与解析层仍把它们读进来涉及文件：`tiangong-lca-cli/src/lib/lifecyclemodel-orchestrate.ts` 涉及文件：`tiangong-lca-cli/test/lifecyclemodel-orchestrate.test.ts` 涉及文件：`tiangong-lca-cli/README.md` 涉及文件：`tiangong-lca-cli/DEV_CN.md` 涉及文件：`tiangong-lca-cli/docs/IMPLEMENTATION_GUIDE_CN.md` 验收标准：所有 `python_bin` / `langgraph` 命中点都被分类到“必须删除的 runtime 兼容面”或“可保留的历史说明”已完成：相关命中点已盘清，并全部转入删除路径；主源码、测试和三份主文档中的显式命中已清零
+
+- [x] 从 runtime、类型和解析层彻底删除 legacy Python 输入面处理目标：删除 `python_bin`、`mode=langgraph` 等 legacy Python 相关字段的类型定义、解析逻辑、兼容归一化和对应测试输入处理原则：不做兼容、不做转换、不做“先解析再报错”的保留层允许保留：仅允许在历史迁移说明中提到“这些字段已被移除”涉及文件：同上验收标准：新的调用方无法再通过当前 request schema 传入 legacy Python 字段；代码里也不再为它们保留专门解析路径已完成：`lifecyclemodel-orchestrate` 的 `process_builder` 已收窄到 CLI-native 字段集合，并在归一化阶段用通用 unsupported-field 校验拒绝额外键；源码里不再保留 legacy Python 专用解析/执行分支
+
+- [x] 收敛“已移除 Python fallback”的公开表述处理目标：README、DEV、实现指南统一使用一套说法，例如：“legacy Python 输入面已删除；当前受支持路径只有 CLI-native Node runtime”涉及文件：`tiangong-lca-cli/README.md` 涉及文件：`tiangong-lca-cli/DEV_CN.md` 涉及文件：`tiangong-lca-cli/docs/IMPLEMENTATION_GUIDE_CN.md` 验收标准：三份文档不再出现互相矛盾或层级不同的表述已完成：README、`DEV_CN.md`、实现指南都统一改成“`process_builder` 只接受 CLI-native 本地构建字段，额外 builder 控制项在归一化阶段直接拒绝”
+
+### Phase 6：补齐跨平台 CI 证据
+
+- [x] 明确 `tiangong-lca-cli` 的 CI 归属当前状态：仓库里没有可见的 repo-local `.github/workflows` 需要先回答：CI 是应该在子仓库内维护，还是在别处统一维护验收标准：这个归属必须写清楚，不能继续处于“默认存在但仓库里看不到”的状态已完成：已在 `tiangong-lca-cli/.github/workflows/quality-gate.yml` 中建立 repo-local 质量门，CLI 的跨平台门禁归属已回到子仓库内可见维护
+
+- [ ] 为 `tiangong-lca-cli` 增加或接入 OS matrix 验证最低要求：`ubuntu-latest` + `windows-latest` 推荐要求：`ubuntu-latest` + `windows-latest` + `macos-latest` 最少命令：`npm ci`、`npm run build`、`npm run lint`、`npm test` 必做命令：`npm run test:coverage`、`npm run test:coverage:assert-full` 推荐命令：`npm run prepush:gate` 验收标准：有自动化记录证明 CLI 至少在 Linux + Windows 上通过，并且 100% 覆盖率门在 CI 中真实执行当前进展：workflow 已配置 `ubuntu-latest` + `windows-latest` matrix，并补上 CI 内显式 checkout/build `tidas-sdk` 与 `TIANGONG_LCA_TIDAS_SDK_DIR` 注入；2026-03-31 本地已继续补掉这轮远端 run 暴露出的剩余真实缺口：coverage summary 不再把仓内 `.ci/tidas-sdk` 计入 CLI 总分，`process-resume-build` / `process-publish-build` / `publish` / `run` 测试不再写死 POSIX 路径，`state-lock` 边缘测试也改成直接覆盖异常注入而非依赖 Unix 权限和路径长度语义；随后已在本地按 CI 方式 checkout/build `.ci/tidas-sdk` 并执行 `TIANGONG_LCA_TIDAS_SDK_DIR=$PWD/.ci/tidas-sdk npm run prepush:gate` 全通过且保持 100% 覆盖率；等待 PR `tiangong-lca/tiangong-cli#52` 的下一轮远端 matrix 复验作为最终自动化证据
+
+- [x] 扩展 `tiangong-lca-skills` 的 `validate-skills` workflow 为 OS matrix 当前状态：只在 `ubuntu-latest` 运行处理目标：至少补 Windows，证明 wrapper + CLI 委托链在 Windows 上成立涉及文件：`tiangong-lca-skills/.github/workflows/validate-skills.yml` 验收标准：`node scripts/validate-skills.mjs` 在 Linux + Windows 上通过当前进展：workflow 已改成 `ubuntu-latest` + `windows-latest` matrix，并补上 CRLF 兼容的 frontmatter 校验；2026-03-31 已再次本地执行 `node scripts/validate-skills.mjs` 通过，并已随 commit `5fbe073` 推送到 PR `tiangong-lca/skills#39`；失败原因、修复内容和复验结果也已补充记录到 PR 评论；远端 run `23807639148` 已确认 `ubuntu-latest` + `windows-latest` 双绿
+
+### Phase 7：最终审计与关账
+
+- [ ] 重新跑代码扫描推荐扫描项： `rg --files -g '*.py' -g '*.sh'` `rg -n 'init_skill\\.py|quick_validate\\.py|run_lifecyclemodel_review\\.py|validate\\.py'` `rg -n 'curl -o-|install\\.sh \\| bash|cp \\.env\\.example \\.env|TIANGONG_LCA_COVERAGE=1'` 验收标准：结果只剩明确允许的历史说明，且不再出现在主路径文档和质量门里
+
+- [ ] 重新跑最小 smoke test 推荐命令： `node ./bin/tiangong.js --help` `node ./bin/tiangong.js doctor --json` `node ./scripts/validate-skills.mjs --help` 以及至少两个 representative wrapper 的 `--help` 验收标准：所有入口都只经过 Node / CLI 路径，不再依赖 Python 或 shell shim
+
+- [ ] 只有在所有验收项完成后，再更新迁移结论处理目标：把“基本完成”改回“完全脱离”验收标准：这一步必须是最后一步，不能提前写结论
+
+## 5. 文件级工作面
+
+### 5.1 `tiangong-lca-cli`
+
+- [ ] `package.json`
+- [ ] `.env.example`
+- [ ] `README.md`
+- [ ] `DEV_CN.md`
+- [ ] `docs/IMPLEMENTATION_GUIDE_CN.md`
+- [ ] `src/lib/lifecyclemodel-orchestrate.ts`
+- [ ] `src/lib/env.ts`
+- [ ] `src/lib/llm.ts`
+- [ ] `src/lib/kb-search.ts`
+- [ ] `src/lib/unstructured.ts`
+- [ ] `test/lifecyclemodel-orchestrate.test.ts`
+- [ ] `scripts/*` 中新增跨平台辅助脚本（如需要）
+- [ ] `.github/workflows/*` 或等价 CI 位置（如由该仓库维护）
+
+### 5.2 `tiangong-lca-skills`
+
+- [ ] `AGENTS.md`
+- [ ] `README.md`
+- [ ] `README.zh-CN.md`
+- [ ] `scripts/validate-skills.mjs`
+- [ ] `lifecyclemodel-automated-builder/references/source-analysis.md`
+- [ ] 各 skill `assets/` 下的 user-facing 示例文件
+- [ ] `.github/workflows/validate-skills.yml`
+
+## 6. 已经做完但不应回退的项
+
+下面这些已经是完成态，不应该在整改过程中倒退：
+
+- [x] skills wrapper 继续保持 Node `.mjs`
+- [x] skills wrapper 继续保持薄调用，不回到私有 transport / CRUD / env parsing
+- [x] CLI 继续保持统一命令树，不回到多套 skill 私有 runtime
+- [x] 新能力仍然必须优先落成原生 `tiangong <noun> <verb>` 命令
+- [x] 不为了解决跨平台问题重新引入 shell shim
+- [x] 不为了解决文档问题重新引入 Python fallback
+
+## 7. 一句话标准
+
+只问这一句：
+
+> 一个 agent 要完成工作时，是否只需要知道 `tiangong` 命令树，并且在 macOS / Linux / Windows 上都能按文档和质量门执行，而不需要知道 skills 内部的 Python、MCP、shell 兼容层细节？
+
+当前答案还不是“完全是”。
+
+把这份 TODO 清完之后，才可以把答案改成“是”。

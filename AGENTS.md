@@ -33,7 +33,7 @@ npm run build
 
 Notes:
 
-- `npm run lint` is the required local gate: `eslint + deprecated diagnostics + prettier --check + tsc`.
+- `npm run lint` is the required local gate: `eslint + deprecated diagnostics + coverage-ignore guard + prettier --check + tsc`.
 - `npm run prettier` is the write-mode formatter.
 - `npm run test:coverage` enforces `100%` coverage for `src/**/*.ts`.
 - `npm run test:coverage:assert-full` verifies the latest coverage artifact without rerunning coverage.
@@ -60,6 +60,7 @@ Notes:
 - If behavior changed, run the relevant tests in the same working session.
 - Before push, the repo must pass `npm run prepush:gate`.
 - Keep `src/**/*.ts` at `100%` statements / branches / functions / lines.
+- Do not use `c8 ignore`, `istanbul ignore`, or similar coverage pragmas to bypass missing tests; cover edge cases in the test suite instead.
 - Keep launcher smoke tests in the normal `npm test` suite; do not weaken them to make coverage easier.
 - Keep diffs scoped; do not mix unrelated refactors into command-surface changes.
 

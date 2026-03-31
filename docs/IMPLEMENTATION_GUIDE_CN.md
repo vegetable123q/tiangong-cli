@@ -168,7 +168,7 @@ tiangong
 - `build-resulting-process` 现在还支持一个显式的 deterministic direct-read 补全路径：当 request 打开 `process_sources.allow_remote_lookup=true` 时，CLI 会从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase REST 路径，按 `process_id/version` 直接补齐缺失的 process dataset
 - `publish-resulting-process` 当前负责生成本地 publish handoff 产物，还没有把提交语义直接并入 `publish run`
 - 已实现的 `lifecyclemodel orchestrate` 把递归装配的 `plan | execute | publish` 三个动作统一收口到 CLI，并直接复用原生 `process auto-build`、`lifecyclemodel auto-build`、`lifecyclemodel build-resulting-process` slices
-- `lifecyclemodel orchestrate` 当前明确拒绝 legacy `process_builder.mode=langgraph` 与 `process_builder.python_bin` 输入，不再保留任何 Python fallback 配置面
+- `lifecyclemodel orchestrate` 的 `process_builder` request schema 已删除旧 builder 控制项，只保留 CLI-native 本地构建字段，并在归一化阶段拒绝额外键；不再保留任何 Python fallback 配置面
 - 已实现的 `review process` 保留本地 artifact-first review contract，把规则核查、报告输出和可选 LLM 语义审核统一收口到 CLI；语义审核只使用 `TIANGONG_LCA_LLM_*`，不再透出 `OPENAI_*`
 - 已实现的 `review flow` 保留本地 artifact-first governance review contract，把 flow 摘要、相似对、规则 findings、可选 LLM findings 和双语 markdown 报告统一收口到 CLI；语义审核同样只使用 `TIANGONG_LCA_LLM_*`
 - `review flow` 当前明确不支持 `--with-reference-context`，也还没有接入本地 registry enrichment；这部分仍需后续迁移切片单独落地
