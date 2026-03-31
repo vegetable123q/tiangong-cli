@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { isDirectEntry, main, maybeRunFromProcess } from '../src/main.js';
 
 const integrationTest = process.env.TIANGONG_LCA_COVERAGE === '1' ? test.skip : test;
@@ -70,9 +71,12 @@ test('main writes stdout for successful command results', async () => {
 });
 
 test('isDirectEntry reports direct and non-direct execution states', () => {
-  const direct = isDirectEntry('file:///tmp/main.ts', '/tmp/main.ts');
-  const notDirect = isDirectEntry('file:///tmp/main.ts', '/tmp/other.ts');
-  const missing = isDirectEntry('file:///tmp/main.ts', undefined);
+  const mainPath = path.resolve(path.join(path.sep, 'tmp', 'main.ts'));
+  const otherPath = path.resolve(path.join(path.sep, 'tmp', 'other.ts'));
+  const mainUrl = pathToFileURL(mainPath).href;
+  const direct = isDirectEntry(mainUrl, mainPath);
+  const notDirect = isDirectEntry(mainUrl, otherPath);
+  const missing = isDirectEntry(mainUrl, undefined);
 
   assert.equal(direct, true);
   assert.equal(notDirect, false);
@@ -80,19 +84,22 @@ test('isDirectEntry reports direct and non-direct execution states', () => {
 });
 
 test('maybeRunFromProcess returns null when not running as the entry module', async () => {
+  const mainPath = path.resolve(path.join(path.sep, 'tmp', 'main.ts'));
+  const otherPath = path.resolve(path.join(path.sep, 'tmp', 'other.ts'));
   const exitCode = await maybeRunFromProcess(
-    ['/usr/local/bin/node', '/tmp/other.ts', 'doctor', '--json'],
+    ['/usr/local/bin/node', otherPath, 'doctor', '--json'],
     {
       TIANGONG_LCA_API_BASE_URL: 'https://example.com/functions/v1',
       TIANGONG_LCA_API_KEY: 'secret-token',
     },
-    'file:///tmp/main.ts',
+    pathToFileURL(mainPath).href,
   );
 
   assert.equal(exitCode, null);
 });
 
 test('maybeRunFromProcess executes the CLI when running as the entry module', async () => {
+  const mainPath = path.resolve(path.join(path.sep, 'tmp', 'main.ts'));
   const originalStdoutWrite = process.stdout.write.bind(process.stdout);
   const originalStderrWrite = process.stderr.write.bind(process.stderr);
   const originalExitCode = process.exitCode;
@@ -110,12 +117,12 @@ test('maybeRunFromProcess executes the CLI when running as the entry module', as
 
   try {
     const exitCode = await maybeRunFromProcess(
-      ['/usr/local/bin/node', '/tmp/main.ts', 'doctor', '--json'],
+      ['/usr/local/bin/node', mainPath, 'doctor', '--json'],
       {
         TIANGONG_LCA_API_BASE_URL: 'https://example.com/functions/v1',
         TIANGONG_LCA_API_KEY: 'secret-token',
       },
-      'file:///tmp/main.ts',
+      pathToFileURL(mainPath).href,
     );
 
     assert.equal(exitCode, 0);

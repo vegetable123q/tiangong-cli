@@ -872,7 +872,10 @@ test('runLifecyclemodelBuildResultingProcess auto-detects process dirs and write
       now,
     });
 
-    assert.match(report.out_dir, /artifacts\/lifecyclemodel_resulting_process\//u);
+    assert.match(
+      report.out_dir.replaceAll('\\', '/'),
+      /artifacts\/lifecyclemodel_resulting_process\//u,
+    );
     assert.equal(report.status, 'projected_local_bundle');
     assert.equal(report.source_model.id, 'lm-solo');
     assert.equal(report.source_model.name, 'Solo model');
