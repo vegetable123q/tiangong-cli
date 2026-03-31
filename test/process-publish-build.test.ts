@@ -231,9 +231,11 @@ test('runProcessPublishBuild writes local publish handoff artifacts from run-id 
     assert.equal(extra.status, publishReport.status);
     assert.equal(extra.request_id, autoReport.request_id);
 
-    assert.match(
-      publishReport.next_actions[2] ?? '',
-      new RegExp(`tiangong publish run --input ${publishReport.files.publish_request}`, 'u'),
+    assert.equal(
+      (publishReport.next_actions[2] ?? '').includes(
+        `tiangong publish run --input ${publishReport.files.publish_request}`,
+      ),
+      true,
     );
   } finally {
     process.chdir(originalCwd);

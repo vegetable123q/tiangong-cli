@@ -475,13 +475,14 @@ test('flow build alias helpers expose deterministic lookup, indexing, and planni
       alias_map_entry: 1,
     },
   );
-  assert.deepEqual(__testInternals.buildOutputFiles('/tmp/helper-out'), {
-    out_dir: '/tmp/helper-out',
-    alias_plan: '/tmp/helper-out/alias-plan.json',
-    alias_plan_jsonl: '/tmp/helper-out/alias-plan.jsonl',
-    flow_alias_map: '/tmp/helper-out/flow-alias-map.json',
-    manual_review_queue: '/tmp/helper-out/manual-review-queue.jsonl',
-    summary: '/tmp/helper-out/alias-summary.json',
+  const helperOutDir = path.join(path.sep, 'tmp', 'helper-out');
+  assert.deepEqual(__testInternals.buildOutputFiles(helperOutDir), {
+    out_dir: helperOutDir,
+    alias_plan: path.join(helperOutDir, 'alias-plan.json'),
+    alias_plan_jsonl: path.join(helperOutDir, 'alias-plan.jsonl'),
+    flow_alias_map: path.join(helperOutDir, 'flow-alias-map.json'),
+    manual_review_queue: path.join(helperOutDir, 'manual-review-queue.jsonl'),
+    summary: path.join(helperOutDir, 'alias-summary.json'),
   });
 
   const seededPlan = __testInternals.planAlias(

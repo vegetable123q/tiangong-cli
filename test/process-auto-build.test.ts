@@ -372,11 +372,12 @@ test('process auto-build internals cover text extraction and fallback summaries'
   );
   assert.equal(uuidFallbackRunId, 'pfw_abc_1234_abc_1234_treat_20260329T040607Z');
 
-  const layout = __testInternals.buildLayout('/tmp/custom-run-root', 'run-1');
-  assert.equal(layout.inputsDir, '/tmp/custom-run-root/input');
-  assert.equal(layout.outputsDir, '/tmp/custom-run-root/exports');
+  const customRunRoot = path.join(path.sep, 'tmp', 'custom-run-root');
+  const layout = __testInternals.buildLayout(customRunRoot, 'run-1');
+  assert.equal(layout.inputsDir, path.join(customRunRoot, 'input'));
+  assert.equal(layout.outputsDir, path.join(customRunRoot, 'exports'));
 
-  const assemblyPlan = __testInternals.buildAssemblyPlan('/tmp/custom-run-root') as {
+  const assemblyPlan = __testInternals.buildAssemblyPlan(customRunRoot) as {
     stages: Array<Record<string, unknown>>;
   };
   assert.equal(assemblyPlan.stages.length, 10);

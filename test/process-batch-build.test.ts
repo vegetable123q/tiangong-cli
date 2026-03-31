@@ -379,9 +379,13 @@ test('runProcessBatchBuild rejects invalid manifests and duplicate runtime ident
 });
 
 test('process batch-build internals cover layout, normalization, and helper fallbacks', () => {
-  const layout = __testInternals.buildLayout('/tmp/process-batch/batch-1', 'batch-1');
+  const batchRunRoot = path.join(path.sep, 'tmp', 'process-batch', 'batch-1');
+  const layout = __testInternals.buildLayout(batchRunRoot, 'batch-1');
   assert.equal(layout.runId, 'batch-1');
-  assert.equal(layout.requestSnapshotPath, '/tmp/process-batch/batch-1/request/batch-request.json');
+  assert.equal(
+    layout.requestSnapshotPath,
+    path.join(batchRunRoot, 'request', 'batch-request.json'),
+  );
 
   assert.equal(
     __testInternals.resolveBatchRoot('/tmp/work', 'batch-1', './override', null),
