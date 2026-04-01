@@ -784,6 +784,25 @@ function build_process_commit_failure_report(
   };
 }
 
+function normalize_process_commit_failure(error: unknown): unknown {
+  if (error instanceof CliError && error.code === 'REMOTE_REQUEST_FAILED') {
+    if (typeof error.details === 'string' && error.details.trim()) {
+      return error.details;
+    }
+
+    if (error.message.startsWith('HTTP 0 returned') && isRecord(error.details)) {
+      const detailMessage =
+        typeof error.details.message === 'string' ? error.details.message.trim() : '';
+      const normalized = detailMessage.replace(/^(?:FetchError|Error):\s*/u, '').trim();
+      if (normalized && normalized !== 'undefined') {
+        return normalized;
+      }
+    }
+  }
+
+  return error instanceof Error ? error.message : error;
+}
+
 function build_commit_success_report(
   plan: PreparedFlowPlan,
   success: FlowPublishSuccessRow,
@@ -996,10 +1015,7 @@ async function commit_process_plans(options: {
       });
       return build_process_commit_success_report(plan, result.operation);
     } catch (error) {
-      return build_process_commit_failure_report(
-        plan,
-        error instanceof Error ? error.message : error,
-      );
+      return build_process_commit_failure_report(plan, normalize_process_commit_failure(error));
     }
   });
 }
@@ -1208,6 +1224,7 @@ export const __testInternals = {
   process_publish_payload_from_row,
   build_process_commit_success_report,
   build_process_commit_failure_report,
+  normalize_process_commit_failure,
   map_with_concurrency,
   commit_process_plans,
 };

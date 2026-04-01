@@ -1,13 +1,14 @@
 import { CliError } from './errors.js';
 import type { FetchLike } from './http.js';
-import { getJson } from './http.js';
+import {
+  createSupabaseDataClient,
+  deriveSupabaseRestBaseUrl,
+  requireSupabaseRestRuntime,
+  runSupabaseArrayQuery,
+  type SupabaseRestRuntime,
+} from './supabase-client.js';
 
 type JsonObject = Record<string, unknown>;
-
-export type SupabaseRestRuntime = {
-  apiBaseUrl: string;
-  apiKey: string;
-};
 
 export type SupabaseProcessRow = {
   id: string;
@@ -28,79 +29,6 @@ export type SupabaseProcessLookup = {
 
 function isRecord(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function requireSupabaseRestRuntime(env: NodeJS.ProcessEnv): SupabaseRestRuntime {
-  const apiBaseUrl =
-    typeof env.TIANGONG_LCA_API_BASE_URL === 'string' && env.TIANGONG_LCA_API_BASE_URL.trim()
-      ? env.TIANGONG_LCA_API_BASE_URL.trim()
-      : null;
-  const apiKey =
-    typeof env.TIANGONG_LCA_API_KEY === 'string' && env.TIANGONG_LCA_API_KEY.trim()
-      ? env.TIANGONG_LCA_API_KEY.trim()
-      : null;
-  const missing: string[] = [];
-
-  if (!apiBaseUrl) {
-    missing.push('TIANGONG_LCA_API_BASE_URL');
-  }
-
-  if (!apiKey) {
-    missing.push('TIANGONG_LCA_API_KEY');
-  }
-
-  if (missing.length > 0) {
-    throw new CliError(`Missing Supabase REST runtime env: ${missing.join(', ')}`, {
-      code: 'SUPABASE_REST_ENV_REQUIRED',
-      exitCode: 2,
-      details: { missing },
-    });
-  }
-
-  return {
-    apiBaseUrl: apiBaseUrl as string,
-    apiKey: apiKey as string,
-  };
-}
-
-function deriveSupabaseRestBaseUrl(apiBaseUrl: string): string {
-  const trimmed = apiBaseUrl.trim().replace(/\/+$/u, '');
-
-  if (!trimmed) {
-    throw new CliError('Cannot derive a Supabase REST base URL from an empty API base URL.', {
-      code: 'SUPABASE_REST_BASE_URL_INVALID',
-      exitCode: 2,
-    });
-  }
-
-  if (trimmed.endsWith('/functions/v1')) {
-    return trimmed.replace(/\/functions\/v1$/u, '/rest/v1');
-  }
-
-  if (trimmed.endsWith('/rest/v1')) {
-    return trimmed;
-  }
-
-  if (/^https?:\/\/[^/]+$/u.test(trimmed)) {
-    return `${trimmed}/rest/v1`;
-  }
-
-  throw new CliError(
-    'Cannot derive a Supabase REST base URL from TIANGONG_LCA_API_BASE_URL. Use a Supabase project base URL, a /functions/v1 base URL, or a /rest/v1 base URL.',
-    {
-      code: 'SUPABASE_REST_BASE_URL_INVALID',
-      exitCode: 2,
-      details: trimmed,
-    },
-  );
-}
-
-function buildHeaders(apiKey: string): Record<string, string> {
-  return {
-    Accept: 'application/json',
-    Authorization: `Bearer ${apiKey}`,
-    apikey: apiKey,
-  };
 }
 
 function buildProcessUrl(
@@ -197,20 +125,27 @@ async function fetchExactOrLatestProcessRow(options: {
   fetchImpl: FetchLike;
   fallbackToLatest?: boolean;
 }): Promise<SupabaseProcessLookup | null> {
-  const restBaseUrl = deriveSupabaseRestBaseUrl(options.runtime.apiBaseUrl);
-  const headers = buildHeaders(options.runtime.apiKey);
+  const { client, restBaseUrl } = createSupabaseDataClient(
+    options.runtime,
+    options.fetchImpl,
+    options.timeoutMs,
+  );
+
   if (!options.version) {
     const latestUrl = buildProcessUrl(restBaseUrl, {
       id: options.id,
       latestOnly: true,
     });
     const latestRows = parseRows(
-      await getJson({
-        url: latestUrl,
-        headers,
-        timeoutMs: options.timeoutMs,
-        fetchImpl: options.fetchImpl,
-      }),
+      await runSupabaseArrayQuery(
+        client
+          .from('processes')
+          .select('id,version,json,modified_at,state_code')
+          .eq('id', options.id)
+          .order('version', { ascending: false })
+          .limit(1),
+        latestUrl,
+      ),
       latestUrl,
     );
 
@@ -230,12 +165,14 @@ async function fetchExactOrLatestProcessRow(options: {
     version: options.version,
   });
   const exactRows = parseRows(
-    await getJson({
-      url: exactUrl,
-      headers,
-      timeoutMs: options.timeoutMs,
-      fetchImpl: options.fetchImpl,
-    }),
+    await runSupabaseArrayQuery(
+      client
+        .from('processes')
+        .select('id,version,json,modified_at,state_code')
+        .eq('id', options.id)
+        .eq('version', options.version),
+      exactUrl,
+    ),
     exactUrl,
   );
 
@@ -256,12 +193,15 @@ async function fetchExactOrLatestProcessRow(options: {
     latestOnly: true,
   });
   const latestRows = parseRows(
-    await getJson({
-      url: latestUrl,
-      headers,
-      timeoutMs: options.timeoutMs,
-      fetchImpl: options.fetchImpl,
-    }),
+    await runSupabaseArrayQuery(
+      client
+        .from('processes')
+        .select('id,version,json,modified_at,state_code')
+        .eq('id', options.id)
+        .order('version', { ascending: false })
+        .limit(1),
+      latestUrl,
+    ),
     latestUrl,
   );
 
@@ -282,3 +222,5 @@ export {
   normalizeSupabaseProcessPayload,
   fetchExactOrLatestProcessRow,
 };
+
+export type { SupabaseRestRuntime };

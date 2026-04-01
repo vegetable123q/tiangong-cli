@@ -9,14 +9,14 @@ Current implementation choices:
 - direct REST / Edge Function calls instead of MCP
 - file-first input and JSON-first output
 - one stable command surface for humans, agents, CI, and skills
-- zero npm production runtime dependencies
+- explicit npm production runtime dependencies only where they reduce long-term maintenance risk: native `@supabase/supabase-js` and direct `@tiangong-lca/tidas-sdk`
 
 ## MCP replacement policy
 
 The CLI replaces MCP with two explicit strategies:
 
 - strategy 1: call domain APIs directly through `tiangong-lca-edge-functions` (Edge Functions / REST)
-- strategy 2: access Supabase directly without MCP; prefer the official Supabase JS SDK for broader CRUD semantics, but keep narrow read-only paths on deterministic REST when that avoids unnecessary runtime dependencies
+- strategy 2: access Supabase directly without MCP through the native `@supabase/supabase-js` client, while keeping deterministic query semantics and stable artifact/report contracts inside the CLI
 
 This prevents reintroducing a generic MCP transport layer into the CLI runtime.
 
@@ -138,6 +138,8 @@ TIANGONG_LCA_UNSTRUCTURED_CHUNK_TYPE=false
 TIANGONG_LCA_UNSTRUCTURED_RETURN_TXT=true
 ```
 
+No extra `SUPABASE_*` or `TIANGONG_LCA_TIDAS_SDK_DIR` env is required. The CLI derives the native `@supabase/supabase-js` client from `TIANGONG_LCA_API_*`, and it loads `@tiangong-lca/tidas-sdk` directly from `package.json` dependencies.
+
 Command-level env reality:
 
 | Command group | Required env |
@@ -214,7 +216,7 @@ npm exec tiangong -- admin embedding-run --input ./jobs.json --dry-run
 
 ## Process build scaffold
 
-`tiangong process get` is the CLI-owned read-only process detail surface. It derives a deterministic Supabase REST read path from `TIANGONG_LCA_API_BASE_URL`, resolves one process row by `id/version` with a latest-version fallback, and returns one structured JSON payload without reintroducing MCP, Python, or a generic transport layer.
+`tiangong process get` is the CLI-owned read-only process detail surface. It derives a deterministic Supabase read target from `TIANGONG_LCA_API_BASE_URL`, executes through the native `@supabase/supabase-js` client, resolves one process row by `id/version` with a latest-version fallback, and returns one structured JSON payload without reintroducing MCP, Python, or a generic transport layer.
 
 `tiangong process auto-build` is the first migrated `process_from_flow` slice. It reads one request JSON from `--input`, loads the referenced ILCD flow dataset from `flow_file`, preserves the old run id contract (`pfw_<flow_code>_<flow_uuid8>_<operation>_<UTC_TIMESTAMP>`), and writes a local run scaffold under `artifacts/process_from_flow/<run_id>/` or `--out-dir`.
 
@@ -242,7 +244,7 @@ The current lifecyclemodel build family intentionally keeps three boundaries out
 - no reference-model discovery against MCP / KB / LLM services
 - no automatic chaining into validate-build or publish-build
 
-`tiangong lifecyclemodel build-resulting-process` remains local-first, but it no longer hard-fails when a request explicitly enables `process_sources.allow_remote_lookup`. In that mode the CLI derives a deterministic Supabase REST read path from `TIANGONG_LCA_API_BASE_URL`, resolves missing process datasets by exact `id/version` with a latest-version fallback, and keeps the same local artifact contract instead of routing through MCP or semantic search.
+`tiangong lifecyclemodel build-resulting-process` remains local-first, but it no longer hard-fails when a request explicitly enables `process_sources.allow_remote_lookup`. In that mode the CLI derives a deterministic Supabase read target from `TIANGONG_LCA_API_BASE_URL`, resolves missing process datasets by exact `id/version` with a latest-version fallback through the native `@supabase/supabase-js` client, and keeps the same local artifact contract instead of routing through MCP or semantic search.
 
 `tiangong lifecyclemodel orchestrate` is the native recursive assembly command for multi-node product-system runs. `plan` writes `assembly-plan.json`, `graph-manifest.json`, `lineage-manifest.json`, and `boundary-report.json`; `execute` invokes only native CLI-backed builder slices and records per-invocation results under `invocations/`; `publish` reopens one orchestrator run and prepares `publish-bundle.json` plus `publish-summary.json` from prior local artifacts. The `process_builder` request surface is now intentionally narrow: only CLI-native local-build fields are accepted, and extra builder knobs are rejected during request normalization.
 
@@ -252,15 +254,15 @@ The current lifecyclemodel build family intentionally keeps three boundaries out
 
 `tiangong review lifecyclemodel` is the lifecyclemodel-side local review slice. It reopens one existing lifecyclemodel build run by `--run-dir`, scans `models/*/tidas_bundle/lifecyclemodels/*.json`, reuses `summary.json`, `connections.json`, `process-catalog.json`, and the aggregate `reports/lifecyclemodel-validate-build-report.json` when present, writes `model_summaries.jsonl`, `findings.jsonl`, `lifecyclemodel_review_summary.json`, `lifecyclemodel_review_zh.md`, `lifecyclemodel_review_en.md`, `lifecyclemodel_review_timing.md`, and `lifecyclemodel_review_report.json`, and stays local-first without introducing Python, LangGraph, or skill-local review runtimes.
 
-`tiangong flow get` is the CLI-owned read-only flow detail surface. It derives a deterministic Supabase REST read path from `TIANGONG_LCA_API_BASE_URL`, resolves one visible flow row by `id` plus optional `version` / `user_id` / `state_code`, falls back to the latest visible version when an exact version lookup misses, and rejects ambiguous visible matches instead of guessing.
+`tiangong flow get` is the CLI-owned read-only flow detail surface. It derives a deterministic Supabase read target from `TIANGONG_LCA_API_BASE_URL`, resolves one visible flow row by `id` plus optional `version` / `user_id` / `state_code` through the native `@supabase/supabase-js` client, falls back to the latest visible version when an exact version lookup misses, and rejects ambiguous visible matches instead of guessing.
 
-`tiangong flow list` is the CLI-owned deterministic flow enumeration surface. It reads `/rest/v1/flows` directly, supports stable filters such as repeated `--id`, `--state-code`, and `--type-of-dataset`, defaults to `order=id.asc,version.asc`, and can fetch all matching rows through explicit offset pagination via `--all --page-size <n>` without reintroducing MCP or skill-local transport code.
+`tiangong flow list` is the CLI-owned deterministic flow enumeration surface. It queries `flows` through the native `@supabase/supabase-js` client while preserving stable `/rest/v1/flows` filter semantics such as repeated `--id`, `--state-code`, and `--type-of-dataset`, defaults to `order=id.asc,version.asc`, and can fetch all matching rows through explicit offset pagination via `--all --page-size <n>` without reintroducing MCP or skill-local transport code.
 
 `tiangong flow remediate` is the first CLI-owned remediation slice for flow governance. It reads one invalid-flow JSON or JSONL input, applies deterministic round1 local remediation, and writes the historical remediation artifacts under one output directory without reintroducing Python or MCP.
 
-`tiangong flow publish-version` is the first CLI-owned remote write slice for flow governance. It reads one ready-for-publish JSON or JSONL input, derives a deterministic Supabase REST path from `TIANGONG_LCA_API_BASE_URL`, performs dry-run or commit mode against `/rest/v1/flows`, and preserves the historical success-list, remote-failure, and sync-report artifact names for downstream follow-up. It still does not implement round2 retry; post-governance product-side regeneration now lives in `tiangong flow regen-product`.
+`tiangong flow publish-version` is the first CLI-owned remote write slice for flow governance. It reads one ready-for-publish JSON or JSONL input, derives a deterministic Supabase write target from `TIANGONG_LCA_API_BASE_URL`, performs dry-run or commit mode through the native `@supabase/supabase-js` client against `/rest/v1/flows`, and preserves the historical success-list, remote-failure, and sync-report artifact names for downstream follow-up. It still does not implement round2 retry; post-governance product-side regeneration now lives in `tiangong flow regen-product`.
 
-`tiangong flow publish-reviewed-data` is the CLI-owned reviewed publish preparation slice for flow governance. It reads reviewed flow rows and/or reviewed process rows from local JSON or JSONL inputs, can use `--original-flow-rows-file` to skip unchanged flow rows before planning publish, supports `skip | append_only_bump | upsert_current_version`, writes `prepared-flow-rows.json`, `prepared-process-rows.json`, `flow-version-map.json`, `skipped-unchanged-flow-rows.json`, `process-flow-ref-rewrite-evidence.jsonl`, and `publish-report.json`, and preserves the historical success-list / remote-failure / sync-report files for downstream follow-up. The native CLI path now covers local process-row preparation, optional process flow-ref rewrites, and commit-time process publish through the same REST-backed writer layer; no legacy fallback path remains for reviewed process rows.
+`tiangong flow publish-reviewed-data` is the CLI-owned reviewed publish preparation slice for flow governance. It reads reviewed flow rows and/or reviewed process rows from local JSON or JSONL inputs, can use `--original-flow-rows-file` to skip unchanged flow rows before planning publish, supports `skip | append_only_bump | upsert_current_version`, writes `prepared-flow-rows.json`, `prepared-process-rows.json`, `flow-version-map.json`, `skipped-unchanged-flow-rows.json`, `process-flow-ref-rewrite-evidence.jsonl`, and `publish-report.json`, and preserves the historical success-list / remote-failure / sync-report files for downstream follow-up. The native CLI path now covers local process-row preparation, optional process flow-ref rewrites, and commit-time process publish through the same `@supabase/supabase-js` writer layer; no legacy fallback path remains for reviewed process rows.
 
 `tiangong flow build-alias-map` is the CLI-owned deterministic alias-map slice for flow governance. It reads one or more old flow snapshots plus one or more new flow snapshots, optionally consumes a seed alias map, writes `alias-plan.json`, `alias-plan.jsonl`, `flow-alias-map.json`, `manual-review-queue.jsonl`, and `alias-summary.json`, and keeps the boundary local-only instead of routing through skill-local Python.
 
@@ -272,7 +274,7 @@ The current lifecyclemodel build family intentionally keeps three boundaries out
 
 `tiangong flow regen-product` is the CLI-owned local product-side regeneration slice for flow governance. It reads one local process row set plus one or more local scope/catalog flow row sets, runs `scan -> repair plan -> optional apply -> optional validate` under one run root, writes stable `scan/`, `repair/`, `repair-apply/`, `validate/`, and `flow-regen-product-report.json` artifacts, and keeps exit code `1` reserved for validation failures after `--apply`.
 
-`tiangong flow validate-processes` is the CLI-owned standalone validation slice for locally patched process rows after governance repair. It reads one original process snapshot, one patched process snapshot, and one or more scope flow snapshots, verifies that only `referenceToFlowDataSet` paths changed, keeps quantitative references stable, optionally runs `tidas-sdk` validation through the existing CLI-side loader, and writes `validation-report.json` plus `validation-failures.jsonl` without falling back to skill-local Python.
+`tiangong flow validate-processes` is the CLI-owned standalone validation slice for locally patched process rows after governance repair. It reads one original process snapshot, one patched process snapshot, and one or more scope flow snapshots, verifies that only `referenceToFlowDataSet` paths changed, keeps quantitative references stable, optionally runs local TIDAS validation through the CLI-owned validator assembled from the direct `@tiangong-lca/tidas-sdk` dependency, and writes `validation-report.json` plus `validation-failures.jsonl` without falling back to skill-local Python.
 
 ## Publish and validation
 
@@ -288,7 +290,7 @@ The current lifecyclemodel build family intentionally keeps three boundaries out
 
 `tiangong publish run` is the CLI-side publish contract boundary. It normalizes publish requests, ingests upstream `publish-bundle.json` inputs, writes `normalized-request.json`, `collected-inputs.json`, `relation-manifest.json`, and `publish-report.json`, and keeps commit-mode execution behind explicit executors instead of reintroducing MCP-specific logic into the CLI.
 
-`tiangong validation run` is the CLI-side validation boundary. It standardizes local TIDAS package validation through one JSON report shape, supports `--engine auto|sdk`, and keeps the local package-validation path inside the bundled `tidas-sdk` parity validator instead of shelling out to `tidas-tools`.
+`tiangong validation run` is the CLI-side validation boundary. It standardizes local TIDAS package validation through one JSON report shape, supports `--engine auto|sdk`, and keeps the local package-validation path inside the CLI-owned validator assembled from the direct `@tiangong-lca/tidas-sdk` dependency instead of shelling out to `tidas-tools` or loading sibling-repo artifacts.
 
 Run the built artifact directly:
 

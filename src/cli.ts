@@ -344,8 +344,8 @@ function renderFlowHelp(): string {
   tiangong flow <subcommand> [options]
 
 Implemented Subcommands:
-  get          Load one flow dataset by identifier through direct Supabase REST
-  list         Enumerate flow datasets through direct Supabase REST with deterministic filters
+  get          Load one flow dataset by identifier through direct Supabase access
+  list         Enumerate flow datasets through direct Supabase access with deterministic filters
   remediate    Deterministically repair invalid local flow rows and emit artifact-first outputs
   publish-version Publish remediated flow versions through the unified CLI surface
   publish-reviewed-data Prepare reviewed flow rows, skip unchanged snapshots, and optionally publish the resulting versions
@@ -389,7 +389,7 @@ Required env:
   TIANGONG_LCA_API_KEY
 
 Runtime note:
-  The CLI derives a direct Supabase REST read path from TIANGONG_LCA_API_BASE_URL.
+  The CLI derives a native @supabase/supabase-js client and deterministic read target from TIANGONG_LCA_API_BASE_URL.
 `.trim();
 }
 
@@ -416,7 +416,7 @@ Required env:
   TIANGONG_LCA_API_KEY
 
 Runtime note:
-  The CLI derives a direct Supabase REST read path from TIANGONG_LCA_API_BASE_URL.
+  The CLI derives a native @supabase/supabase-js client and deterministic read target from TIANGONG_LCA_API_BASE_URL.
 `.trim();
 }
 
@@ -878,7 +878,7 @@ Required env:
   TIANGONG_LCA_API_KEY
 
 Runtime note:
-  The CLI derives a direct Supabase REST read path from TIANGONG_LCA_API_BASE_URL.
+  The CLI derives a native @supabase/supabase-js client and deterministic read target from TIANGONG_LCA_API_BASE_URL.
 `.trim();
 }
 
@@ -923,7 +923,7 @@ function renderProcessHelp(): string {
   tiangong process <subcommand> [options]
 
 Implemented Subcommands:
-  get          Load one process dataset by identifier through direct Supabase REST
+  get          Load one process dataset by identifier through direct Supabase access
   auto-build   Prepare a local process-from-flow run scaffold and artifact workspace
   resume-build Prepare a local resume handoff from one existing process build run
   publish-build Prepare publish handoff artifacts from one existing process build run

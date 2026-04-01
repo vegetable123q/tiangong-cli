@@ -1,8 +1,16 @@
 import { CliError } from './errors.js';
-import { getJson, type FetchLike } from './http.js';
-import { deriveSupabaseRestBaseUrl, type SupabaseRestRuntime } from './supabase-rest.js';
+import type { FetchLike } from './http.js';
+import {
+  buildSupabaseAuthHeaders,
+  createSupabaseDataClient,
+  runSupabaseArrayQuery,
+  type SupabaseRestRuntime,
+} from './supabase-client.js';
 
 type JsonObject = Record<string, unknown>;
+
+const TYPE_OF_DATASET_QUERY_PATH =
+  'json->flowDataSet->modellingAndValidation->LCIMethod->>typeOfDataSet';
 
 export type SupabaseFlowRow = {
   id: string;
@@ -33,16 +41,17 @@ export type SupabaseFlowLookup = {
     | 'remote_supabase_latest_fallback';
 };
 
+type QueryWithUrl = {
+  url: URL;
+  limit: (count: number) => QueryWithUrl;
+};
+
 function isRecord(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function buildHeaders(apiKey: string): Record<string, string> {
-  return {
-    Accept: 'application/json',
-    Authorization: `Bearer ${apiKey}`,
-    apikey: apiKey,
-  };
+  return buildSupabaseAuthHeaders(apiKey);
 }
 
 function normalizeTokenList(values: readonly string[] | undefined): string[] {
@@ -107,12 +116,10 @@ function buildFlowListUrl(restBaseUrl: string, filters: FlowListQueryFilters): s
   }
 
   const typeOfDataset = normalizeTokenList(filters.typeOfDataset);
-  const typeOfDatasetQueryPath =
-    'json->flowDataSet->modellingAndValidation->LCIMethod->>typeOfDataSet';
   if (typeOfDataset.length === 1) {
-    url.searchParams.set(typeOfDatasetQueryPath, `eq.${typeOfDataset[0]}`);
+    url.searchParams.set(TYPE_OF_DATASET_QUERY_PATH, `eq.${typeOfDataset[0]}`);
   } else if (typeOfDataset.length > 1) {
-    url.searchParams.set(typeOfDatasetQueryPath, `in.(${typeOfDataset.join(',')})`);
+    url.searchParams.set(TYPE_OF_DATASET_QUERY_PATH, `in.(${typeOfDataset.join(',')})`);
   }
 
   if (typeof filters.order === 'string' && filters.order.trim()) {
@@ -195,23 +202,98 @@ function normalizeSupabaseFlowPayload(payload: unknown, lookupKey: string): Json
   return payload;
 }
 
+function applyOrder<Query extends { order: (column: string, options?: object) => Query }>(
+  query: Query,
+  orderValue: string | null | undefined,
+): Query {
+  const normalizedOrder = typeof orderValue === 'string' ? orderValue.trim() : '';
+  if (!normalizedOrder) {
+    return query;
+  }
+
+  let nextQuery = query;
+  for (const rawToken of normalizedOrder.split(',')) {
+    const token = rawToken.trim();
+    if (!token) {
+      continue;
+    }
+
+    const [column, direction, nulls] = token.split('.');
+    if (!column) {
+      continue;
+    }
+
+    nextQuery = nextQuery.order(column, {
+      ascending: direction !== 'desc',
+      nullsFirst: nulls === 'nullsfirst' ? true : nulls === 'nullslast' ? false : undefined,
+    });
+  }
+
+  return nextQuery;
+}
+
 async function listFlowRows(options: {
   runtime: SupabaseRestRuntime;
   filters: FlowListQueryFilters;
   timeoutMs: number;
   fetchImpl: FetchLike;
 }): Promise<{ rows: SupabaseFlowRow[]; sourceUrl: string }> {
-  const restBaseUrl = deriveSupabaseRestBaseUrl(options.runtime.apiBaseUrl);
-  const sourceUrl = buildFlowListUrl(restBaseUrl, options.filters);
-  const rows = parseFlowRows(
-    await getJson({
-      url: sourceUrl,
-      headers: buildHeaders(options.runtime.apiKey),
-      timeoutMs: options.timeoutMs,
-      fetchImpl: options.fetchImpl,
-    }),
-    sourceUrl,
+  const { client, restBaseUrl } = createSupabaseDataClient(
+    options.runtime,
+    options.fetchImpl,
+    options.timeoutMs,
   );
+  const sourceUrl = buildFlowListUrl(restBaseUrl, options.filters);
+  let query = client.from('flows').select('id,version,user_id,state_code,modified_at,json');
+
+  const ids = normalizeTokenList(options.filters.ids);
+  if (ids.length === 1) {
+    query = query.eq('id', ids[0] as string);
+  } else if (ids.length > 1) {
+    query = query.filter('id', 'in', `(${ids.join(',')})`);
+  }
+
+  if (typeof options.filters.version === 'string' && options.filters.version.trim()) {
+    query = query.eq('version', options.filters.version.trim());
+  }
+
+  if (typeof options.filters.userId === 'string' && options.filters.userId.trim()) {
+    query = query.eq('user_id', options.filters.userId.trim());
+  }
+
+  const stateCodes = normalizeStateCodeList(options.filters.stateCodes);
+  if (stateCodes.length === 1) {
+    query = query.eq('state_code', stateCodes[0] as number);
+  } else if (stateCodes.length > 1) {
+    query = query.filter('state_code', 'in', `(${stateCodes.join(',')})`);
+  }
+
+  const typeOfDataset = normalizeTokenList(options.filters.typeOfDataset);
+  if (typeOfDataset.length === 1) {
+    query = query.filter(TYPE_OF_DATASET_QUERY_PATH, 'eq', typeOfDataset[0] as string);
+  } else if (typeOfDataset.length > 1) {
+    query = query.filter(TYPE_OF_DATASET_QUERY_PATH, 'in', `(${typeOfDataset.join(',')})`);
+  }
+
+  query = applyOrder(query, options.filters.order ?? null);
+
+  const limit =
+    Number.isInteger(options.filters.limit) && (options.filters.limit as number) > 0
+      ? (options.filters.limit as number)
+      : null;
+  const offset =
+    Number.isInteger(options.filters.offset) && (options.filters.offset as number) >= 0
+      ? (options.filters.offset as number)
+      : null;
+
+  if (limit !== null && offset !== null) {
+    query = query.limit(limit);
+    (query as unknown as QueryWithUrl).url.searchParams.set('offset', String(offset));
+  } else if (limit !== null) {
+    query = query.limit(limit);
+  }
+
+  const rows = parseFlowRows(await runSupabaseArrayQuery(query, sourceUrl), sourceUrl);
   return { rows, sourceUrl };
 }
 
@@ -358,3 +440,5 @@ export const __testInternals = {
   normalizeTokenList,
   parseFlowRows,
 };
+
+export type { SupabaseRestRuntime };

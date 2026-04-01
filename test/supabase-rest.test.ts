@@ -15,10 +15,12 @@ function jsonFetch(
 ): FetchLike {
   let index = 0;
   return (async (input, init) => {
+    const normalizedHeaders =
+      init?.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : init?.headers;
     observed.push({
       url: String(input),
       method: String(init?.method ?? ''),
-      headers: init?.headers,
+      headers: normalizedHeaders,
     });
     const next = responses[Math.min(index, responses.length - 1)];
     index += 1;
@@ -149,11 +151,10 @@ test('fetchExactOrLatestProcessRow returns the exact version row when present', 
   assert.equal(observed[0]?.method, 'GET');
   assert.match(observed[0]?.url ?? '', /\/rest\/v1\/processes/u);
   assert.match(observed[0]?.url ?? '', /version=eq\.00\.00\.001/u);
-  assert.deepEqual(observed[0]?.headers, {
-    Accept: 'application/json',
-    Authorization: 'Bearer secret-token',
-    apikey: 'secret-token',
-  });
+  const headers = observed[0]?.headers as Record<string, string>;
+  assert.equal(headers.accept, 'application/json');
+  assert.equal(headers.authorization, 'Bearer secret-token');
+  assert.equal(headers.apikey, 'secret-token');
 });
 
 test('fetchExactOrLatestProcessRow returns the latest row when no version is requested', async () => {

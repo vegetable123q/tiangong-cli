@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { CliError } from '../src/lib/errors.js';
 import type { FetchLike } from '../src/lib/http.js';
+import { createSupabaseDataClient } from '../src/lib/supabase-client.js';
 import {
   __testInternals,
   hasSupabaseRestRuntime,
@@ -248,36 +249,48 @@ test('append-only insert skips existing rows and validates helper branches', asy
 });
 
 test('supabase json_ordered helpers handle empty/text success payloads and invalid visible-row shapes', async () => {
-  await __testInternals.insertJsonOrderedRow({
-    restBaseUrl: 'https://example.supabase.co/rest/v1',
-    table: 'processes',
-    apiKey: 'key',
-    id: 'proc-text',
-    payload: { processDataSet: {} },
-    timeoutMs: 10,
-    fetchImpl: async () =>
+  const insertClient = createSupabaseDataClient(
+    {
+      apiBaseUrl: 'https://example.supabase.co',
+      apiKey: 'key',
+    },
+    async () =>
       makeResponse({
         ok: true,
         status: 201,
         contentType: 'text/plain',
         body: 'created',
       }),
-  });
-
-  await __testInternals.updateJsonOrderedRow({
+    10,
+  );
+  await __testInternals.insertJsonOrderedRow({
+    client: insertClient.client,
     restBaseUrl: 'https://example.supabase.co/rest/v1',
     table: 'processes',
-    apiKey: 'key',
-    id: 'proc-empty',
-    version: '01.00.001',
+    id: 'proc-text',
     payload: { processDataSet: {} },
-    timeoutMs: 10,
-    fetchImpl: async () =>
+  });
+
+  const updateClient = createSupabaseDataClient(
+    {
+      apiBaseUrl: 'https://example.supabase.co',
+      apiKey: 'key',
+    },
+    async () =>
       makeResponse({
         ok: true,
         status: 200,
         body: '',
       }),
+    10,
+  );
+  await __testInternals.updateJsonOrderedRow({
+    client: updateClient.client,
+    restBaseUrl: 'https://example.supabase.co/rest/v1',
+    table: 'processes',
+    id: 'proc-empty',
+    version: '01.00.001',
+    payload: { processDataSet: {} },
   });
 
   assert.throws(

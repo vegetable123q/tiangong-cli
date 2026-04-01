@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { writeJsonArtifact, writeJsonLinesArtifact, writeTextArtifact } from './artifacts.js';
 import { CliError } from './errors.js';
 import {
@@ -12,7 +11,6 @@ import {
   normalizeText,
   type JsonRecord,
 } from './flow-governance.js';
-import { resolveRepoRootFrom, resolveTidasSdkRoot } from './validation.js';
 
 const CONTACT_UUID = 'f4b4c314-8c4c-4c83-968f-5b3c7724f6a8';
 const CONTACT_VERSION = '01.00.000';
@@ -143,17 +141,8 @@ type FlowPropertyDescriptor = {
   version: string;
 };
 
-function resolve_cli_repo_root(): string {
-  return resolveRepoRootFrom(path.dirname(fileURLToPath(import.meta.url)));
-}
-
 function build_sdk_candidates(): string[] {
-  const repoRoot = resolve_cli_repo_root();
-  const sdkRoot = resolveTidasSdkRoot(repoRoot);
-  return [
-    '@tiangong-lca/tidas-sdk/core',
-    path.join(sdkRoot, 'sdks', 'typescript', 'dist', 'core', 'index.js'),
-  ];
+  return ['@tiangong-lca/tidas-sdk/core'];
 }
 
 function resolve_sdk_module_from_candidates(

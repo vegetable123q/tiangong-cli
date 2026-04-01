@@ -1,9 +1,9 @@
 import { existsSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { CliError } from './errors.js';
 import { writeJsonArtifact } from './artifacts.js';
+import { createTidasSdkPackageValidator } from './tidas-sdk-package-validator.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -100,26 +100,8 @@ export function resolveRepoRootFrom(startDir: string): string {
   }
 }
 
-export function resolveTidasSdkRoot(repoRoot: string): string {
-  const explicitRoot = process.env.TIANGONG_LCA_TIDAS_SDK_DIR?.trim();
-  if (explicitRoot) {
-    return path.resolve(explicitRoot);
-  }
-
-  return path.join(repoRoot, '..', 'tidas-sdk');
-}
-
-function resolve_cli_repo_root(): string {
-  return resolveRepoRootFrom(path.dirname(fileURLToPath(import.meta.url)));
-}
-
 function build_sdk_candidates(): string[] {
-  const repoRoot = resolve_cli_repo_root();
-  const sdkRoot = resolveTidasSdkRoot(repoRoot);
-  return [
-    '@tiangong-lca/tidas-sdk/parity',
-    path.join(sdkRoot, 'sdks', 'typescript', 'dist', 'parity', 'index.js'),
-  ];
+  return ['@tiangong-lca/tidas-sdk'];
 }
 
 function normalizeValidationMode(value: string | undefined): ValidationMode {
@@ -253,7 +235,9 @@ export function resolveSdkModuleFromCandidates(
 
   for (const candidate of candidates) {
     try {
-      const loaded = requireFn(candidate) as { validatePackageDir?: unknown };
+      const loaded = requireFn(candidate) as Record<string, unknown> & {
+        validatePackageDir?: unknown;
+      };
       if (typeof loaded.validatePackageDir === 'function') {
         return {
           location: candidate,
@@ -263,13 +247,22 @@ export function resolveSdkModuleFromCandidates(
           ) => unknown,
         };
       }
-      details.push(`Candidate missing validatePackageDir export: ${candidate}`);
+
+      const packageValidator = createTidasSdkPackageValidator(
+        loaded as Parameters<typeof createTidasSdkPackageValidator>[0],
+        candidate,
+      );
+      if (packageValidator) {
+        return packageValidator;
+      }
+
+      details.push(`Candidate missing direct package validation exports: ${candidate}`);
     } catch (error) {
       details.push(`${candidate}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  throw new CliError('Unable to resolve the local tidas-sdk parity validator.', {
+  throw new CliError('Unable to resolve the direct tidas-sdk package validator.', {
     code: 'VALIDATION_SDK_UNAVAILABLE',
     exitCode: 2,
     details,

@@ -5,8 +5,15 @@
 当前更准确的判断是：
 
 - `tiangong-lca-cli` 和 `tiangong-lca-skills` 的主运行时路径，已经完全收敛到 TypeScript / Node + `tiangong` CLI
-- 仓库治理、开发质量门、公开文档和跨平台验证都已完成闭环
-- 因此现在可以把这项工作标记为“已经彻底脱离 Python 和无法跨平台的 shell”
+- 仓库治理、开发质量门、公开文档和跨平台验证已经形成可验证闭环
+- 这可以证明主运行时已经脱离 Python 和无法跨平台的 shell
+- 但如果要满足更严格的“一句话标准”，还必须同时清掉 direct dependency / env / docs / CI 的剩余收口项；不能只拿本 checklist 直接下“完全是”的结论
+
+补充说明：
+
+- 自 2026-04-01 起，这份文档主要作为“Python / POSIX runtime 脱离”审计记录保留
+- 关于 `@supabase/supabase-js`、`@tiangong-lca/tidas-sdk` 直接依赖收口的当前执行状态，以 `docs/TEMP_ISSUE_55_DIRECT_DEPS_TODO_CN.md` 为准
+- 如果两份文档冲突，以后者代表当前待办和当前结论
 
 这份文档记录的是：
 
@@ -77,7 +84,7 @@
 
 - [x] 确认 `prepush:gate` 只依赖跨平台命令当前要求：`prepush:gate` 依赖 `test:coverage` 处理目标：`npm run prepush:gate` 不再因为 shell 语法差异在 Windows 失败涉及文件：`tiangong-lca-cli/package.json` 验收标准：`npm run prepush:gate` 在至少 Linux + Windows 两个平台上跑通已完成：本地门禁链条已全部转成 `npm` / `node` / `tsx` 路径；Windows 真实验证留给 Phase 6 的 OS matrix
 
-- [x] 把“测试全绿 + 100% 覆盖率” 固化为唯一通过门槛当前状态：本地文档和 `prepush:gate` 已经表达了这个方向，但还没有在跨平台 CI 里形成稳定、可见、不可绕过的统一门禁处理目标：明确以下四个命令的角色并接入门禁： `npm test` `npm run test:coverage` `npm run test:coverage:assert-full` `npm run prepush:gate` 要求：所有测试必须通过，且 `src/**/*.ts` 维持 lines / statements / functions / branches 全部 100% 涉及文件：`tiangong-lca-cli/package.json` 涉及文件：`tiangong-lca-cli/AGENTS.md` 涉及文件：`tiangong-lca-cli/README.md` 涉及文件：`tiangong-lca-cli/DEV_CN.md` 涉及文件：`tiangong-lca-cli/scripts/assert-full-coverage.ts` 验收标准：本地与 CI 都以“测试全绿 + 严格 100% 覆盖率”作为硬门禁，不存在只跑部分测试或只看松散 coverage summary 的路径已完成：本地 `npm test`、`npm run test:coverage`、`npm run test:coverage:assert-full`、`npm run prepush:gate` 均已通过；coverage 断言现只聚焦 CLI 自有 `src` 文件集合；在本地按 CI 方式 checkout/build `.ci/tidas-sdk` 后再次执行 `TIANGONG_LCA_TIDAS_SDK_DIR=$PWD/.ci/tidas-sdk npm run test:coverage`、`npm run test:coverage:assert-full`、`npm run prepush:gate` 保持 100% 覆盖率；follow-up PR `tiangong-lca/tiangong-cli#53` 的 `ubuntu-latest` + `windows-latest` matrix 已双绿并合并
+- [x] 把“测试全绿 + 100% 覆盖率” 固化为唯一通过门槛当前状态：本地文档和 `prepush:gate` 已经表达了这个方向，但还没有在跨平台 CI 里形成稳定、可见、不可绕过的统一门禁处理目标：明确以下四个命令的角色并接入门禁： `npm test` `npm run test:coverage` `npm run test:coverage:assert-full` `npm run prepush:gate` 要求：所有测试必须通过，且 `src/**/*.ts` 维持 lines / statements / functions / branches 全部 100% 涉及文件：`tiangong-lca-cli/package.json` 涉及文件：`tiangong-lca-cli/AGENTS.md` 涉及文件：`tiangong-lca-cli/README.md` 涉及文件：`tiangong-lca-cli/DEV_CN.md` 涉及文件：`tiangong-lca-cli/scripts/assert-full-coverage.ts` 验收标准：本地与 CI 都以“测试全绿 + 严格 100% 覆盖率”作为硬门禁，不存在只跑部分测试或只看松散 coverage summary 的路径已完成：本地 `npm test`、`npm run test:coverage`、`npm run test:coverage:assert-full`、`npm run prepush:gate` 均已通过；coverage 断言现只聚焦 CLI 自有 `src` 文件集合；当时按 CI 的依赖准备方式再次执行上述 coverage 门也保持 100% 通过；follow-up PR `tiangong-lca/tiangong-cli#53` 的 `ubuntu-latest` + `windows-latest` matrix 已双绿并合并
 
 - [x] 为覆盖率质量门补一个最小的 Windows 回归验证处理目标：避免后续有人把 POSIX-only 语法重新加回 `package.json` 涉及文件：`tiangong-lca-cli/.github/workflows/*` 或等价 CI 所在位置验收标准：CI 中存在明确的 Windows 任务覆盖 `npm run test:coverage` 已完成：repo-local workflow 已在 `windows-latest` 上显式运行 `npm run test:coverage`、`npm run test:coverage:assert-full` 和 `npm run prepush:gate`，并已随 PR `#53` 远端通过
 
@@ -117,7 +124,7 @@
 
 - [x] 明确 `tiangong-lca-cli` 的 CI 归属当前状态：仓库里没有可见的 repo-local `.github/workflows` 需要先回答：CI 是应该在子仓库内维护，还是在别处统一维护验收标准：这个归属必须写清楚，不能继续处于“默认存在但仓库里看不到”的状态已完成：已在 `tiangong-lca-cli/.github/workflows/quality-gate.yml` 中建立 repo-local 质量门，CLI 的跨平台门禁归属已回到子仓库内可见维护
 
-- [x] 为 `tiangong-lca-cli` 增加或接入 OS matrix 验证最低要求：`ubuntu-latest` + `windows-latest` 推荐要求：`ubuntu-latest` + `windows-latest` + `macos-latest` 最少命令：`npm ci`、`npm run build`、`npm run lint`、`npm test` 必做命令：`npm run test:coverage`、`npm run test:coverage:assert-full` 推荐命令：`npm run prepush:gate` 验收标准：有自动化记录证明 CLI 至少在 Linux + Windows 上通过，并且 100% 覆盖率门在 CI 中真实执行已完成：workflow 已配置 `ubuntu-latest` + `windows-latest` matrix，并补上 CI 内显式 checkout/build `tidas-sdk` 与 `TIANGONG_LCA_TIDAS_SDK_DIR` 注入；本地修复了 coverage summary、路径断言、URL/正则和锁文件边缘测试里的全部 Windows-only 假设；最终 follow-up PR `tiangong-lca/tiangong-cli#53` 已在 `ubuntu-latest` + `windows-latest` 上双绿并合并，CLI 的跨平台自动化证据现已成立
+- [x] 为 `tiangong-lca-cli` 增加或接入 OS matrix 验证最低要求：`ubuntu-latest` + `windows-latest` 推荐要求：`ubuntu-latest` + `windows-latest` + `macos-latest` 最少命令：`npm ci`、`npm run build`、`npm run lint`、`npm test` 必做命令：`npm run test:coverage`、`npm run test:coverage:assert-full` 推荐命令：`npm run prepush:gate` 验收标准：有自动化记录证明 CLI 至少在 Linux + Windows 上通过，并且 100% 覆盖率门在 CI 中真实执行已完成：workflow 已配置 `ubuntu-latest` + `windows-latest` matrix；当时的 CI 依赖准备方式也已验证可行。后续 direct dependency 收口完成后，当前路径已进一步简化为仓内直接依赖。最终 follow-up PR `tiangong-lca/tiangong-cli#53` 已在 `ubuntu-latest` + `windows-latest` 上双绿并合并，CLI 的跨平台自动化证据现已成立
 
 - [x] 扩展 `tiangong-lca-skills` 的 `validate-skills` workflow 为 OS matrix 当前状态：只在 `ubuntu-latest` 运行处理目标：至少补 Windows，证明 wrapper + CLI 委托链在 Windows 上成立涉及文件：`tiangong-lca-skills/.github/workflows/validate-skills.yml` 验收标准：`node scripts/validate-skills.mjs` 在 Linux + Windows 上通过当前进展：workflow 已改成 `ubuntu-latest` + `windows-latest` matrix，并补上 CRLF 兼容的 frontmatter 校验；2026-03-31 已再次本地执行 `node scripts/validate-skills.mjs` 通过，并已随 commit `5fbe073` 推送到 PR `tiangong-lca/skills#39`；失败原因、修复内容和复验结果也已补充记录到 PR 评论；远端 run `23807639148` 已确认 `ubuntu-latest` + `windows-latest` 双绿
 

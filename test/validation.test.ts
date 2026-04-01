@@ -9,7 +9,6 @@ import {
   resolveLocalSdkModule,
   resolveRepoRootFrom,
   resolveSdkModuleFromCandidates,
-  resolveTidasSdkRoot,
   runValidation,
 } from '../src/lib/validation.js';
 
@@ -95,25 +94,6 @@ test('runValidation uses sdk validation in auto mode', async () => {
   }
 });
 
-test('resolveTidasSdkRoot honors explicit env override and sibling fallback', () => {
-  const repoRoot = path.resolve('/tmp', 'tiangong-cli');
-  const previousRoot = process.env.TIANGONG_LCA_TIDAS_SDK_DIR;
-
-  try {
-    delete process.env.TIANGONG_LCA_TIDAS_SDK_DIR;
-    assert.equal(resolveTidasSdkRoot(repoRoot), path.join(repoRoot, '..', 'tidas-sdk'));
-
-    process.env.TIANGONG_LCA_TIDAS_SDK_DIR = '  /tmp/custom-tidas-sdk  ';
-    assert.equal(resolveTidasSdkRoot(repoRoot), path.resolve('/tmp/custom-tidas-sdk'));
-  } finally {
-    if (previousRoot === undefined) {
-      delete process.env.TIANGONG_LCA_TIDAS_SDK_DIR;
-    } else {
-      process.env.TIANGONG_LCA_TIDAS_SDK_DIR = previousRoot;
-    }
-  }
-});
-
 test('runValidation can use the default local sdk loader when available', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-validation-defaults-'));
 
@@ -125,6 +105,7 @@ test('runValidation can use the default local sdk loader when available', async 
     });
 
     assert.equal(typeof localSdk.validatePackageDir, 'function');
+    assert.equal(localSdk.location, '@tiangong-lca/tidas-sdk');
     assert.equal(sdkReport.ok, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -157,7 +138,7 @@ test('runValidation resolves sdk candidates and surfaces resolution failures', a
           },
           ['/tmp/missing-package.js', '/tmp/throws-string.js', '/tmp/broken-export.js'],
         ),
-      /Unable to resolve the local tidas-sdk parity validator/u,
+      /Unable to resolve the direct tidas-sdk package validator/u,
     );
 
     await assert.rejects(

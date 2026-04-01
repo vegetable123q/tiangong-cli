@@ -14,7 +14,7 @@
 统一 CLI 不再引入 MCP 作为内部传输层，替代策略固定为两条：
 
 - 策略 1：优先直连 `tiangong-lca-edge-functions` 的 Edge Function / REST（适用于有明确业务语义的 API）
-- 策略 2：对 Supabase 直接访问时不再经过 MCP；复杂 CRUD 优先官方 Supabase JS SDK，像 `process get` 这类窄读路径则允许用 deterministic REST 保持零运行时依赖
+- 策略 2：对 Supabase 直接访问时不再经过 MCP；CLI 直接依赖官方 `@supabase/supabase-js`，并在此基础上保持 deterministic 的读写语义、URL 形状和报告契约
 
 这两条共同目标是：不再发明新的中间 transport 实体。
 
@@ -102,6 +102,8 @@ TIANGONG_LCA_UNSTRUCTURED_MODEL=
 TIANGONG_LCA_UNSTRUCTURED_CHUNK_TYPE=false
 TIANGONG_LCA_UNSTRUCTURED_RETURN_TXT=true
 ```
+
+当前也不需要额外配置 `SUPABASE_URL`、`SUPABASE_KEY` 或 `TIANGONG_LCA_TIDAS_SDK_DIR`。CLI 会从 `TIANGONG_LCA_API_*` 派生原生 `@supabase/supabase-js` client，并直接从 `package.json` 依赖加载 `@tiangong-lca/tidas-sdk`。
 
 不再兼容旧变量名，也不再把 KB、TianGong unstructured service、MCP 相关 env 混写成当前公开命令面的必需配置。
 
@@ -358,7 +360,7 @@ npm exec tiangong -- admin embedding-run --input ./jobs.json --dry-run
 - 输出 `lifecyclemodel_review_timing.md`
 - 输出 `lifecyclemodel_review_report.json`
 
-这个命令当前保持本地 artifact-first，不引入 Python、LangGraph 或 skill 私有 review runtime。本地 validation 边界也已经收口到 `tidas-sdk` parity validator，不再依赖 `uv run tidas-validate` 这类外部 fallback。
+这个命令当前保持本地 artifact-first，不引入 Python、LangGraph 或 skill 私有 review runtime。本地 validation 边界也已经收口到 CLI 内组装的 `@tiangong-lca/tidas-sdk` 校验器，不再依赖 sibling repo、`uv run tidas-validate` 或其他外部 fallback。
 
 `tiangong flow get` 现在已经承担 flow governance 的只读详情切片，负责：
 
@@ -411,7 +413,7 @@ npm exec tiangong -- admin embedding-run --input ./jobs.json --dry-run
 - 输出 `publish-report.json`
 - 保留历史兼容的 `mcp_success_list`、`remote_validation_failed`、`mcp_sync_report`
 
-这个命令现在已经覆盖 flow/process 的本地 reviewed publish 准备阶段；当显式传入 `--commit` 时，prepared flow rows 和 prepared process rows 都会通过 CLI 自己的 REST writer 层执行远端提交，不再依赖任何 legacy skill 路径。
+这个命令现在已经覆盖 flow/process 的本地 reviewed publish 准备阶段；当显式传入 `--commit` 时，prepared flow rows 和 prepared process rows 都会通过 CLI 自己基于 `@supabase/supabase-js` 的 writer layer 执行远端提交，不再依赖任何 legacy skill 路径。
 
 `tiangong flow build-alias-map` 现在已经承担 flow governance 的 deterministic alias map 切片，负责：
 
@@ -483,7 +485,7 @@ npm exec tiangong -- admin embedding-run --input ./jobs.json --dry-run
 - 读取一个或多个 scope flow JSON / JSONL 输入
 - 校验只允许 `referenceToFlowDataSet` 路径变化
 - 校验 quantitative reference 保持稳定
-- 可选复用 CLI 侧 `tidas-sdk` loader 执行本地 TIDAS 校验
+- 可选复用 CLI 侧基于直接依赖 `@tiangong-lca/tidas-sdk` 组装的本地 TIDAS 校验器
 - 输出 `validation-report.json`、`validation-failures.jsonl`
 
 这个命令当前只负责本地 patch validation，不负责 repair 规划、apply 或远端写入。
@@ -502,8 +504,8 @@ npm exec tiangong -- admin embedding-run --input ./jobs.json --dry-run
 
 `tiangong validation run` 负责把本地 TIDAS 包校验统一收口到 CLI：
 
-- `--engine auto`：走本地 `tidas-sdk` parity validator 的默认路径
-- `--engine sdk`：只跑 `tidas-sdk`
+- `--engine auto`：走当前默认的 direct-dependency 校验路径，也就是 CLI 内基于 `@tiangong-lca/tidas-sdk` 组装的 package validator
+- `--engine sdk`：显式固定到同一条 `@tiangong-lca/tidas-sdk` 校验链
 
 这两个命令都不需要新增 `TIANGONG_LCA_*` 之外的环境变量。
 

@@ -22,7 +22,7 @@
 MCP 替代策略也固定为两条：
 
 - 策略 1：对业务 API 直接调用 `tiangong-lca-edge-functions`（Edge Functions / REST）
-- 策略 2：对 Supabase 直接访问时不再经过 MCP；复杂 CRUD 优先官方 Supabase JS SDK，像 `process get` 这类窄读路径则允许用 deterministic REST 保持零运行时依赖
+- 策略 2：对 Supabase 直接访问时不再经过 MCP；CLI 直接依赖官方 `@supabase/supabase-js`，并在此基础上保持 deterministic 的读写语义、URL 形状和报告契约
 
 这两条是并行可选策略，不再引入新的 MCP 中间层。
 
@@ -81,10 +81,10 @@ tiangong
 | `tiangong search flow` | `flow_hybrid_search` |
 | `tiangong search process` | `process_hybrid_search` |
 | `tiangong search lifecyclemodel` | `lifecyclemodel_hybrid_search` |
-| `tiangong flow get` | 统一 CLI 持有的只读 flow 详情读取面；从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase REST 路径并按 `id/version/user/state` 读取 |
-| `tiangong flow list` | 统一 CLI 持有的只读 flow 枚举面；从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase REST 路径并提供稳定过滤/排序/分页 |
+| `tiangong flow get` | 统一 CLI 持有的只读 flow 详情读取面；从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase 目标并通过原生 `@supabase/supabase-js` 按 `id/version/user/state` 读取 |
+| `tiangong flow list` | 统一 CLI 持有的只读 flow 枚举面；通过原生 `@supabase/supabase-js` 保持稳定过滤/排序/分页语义 |
 | `tiangong flow remediate` | 本地 flow governance round1 deterministic remediation、artifact-first 输出 |
-| `tiangong flow publish-version` | 统一 CLI 持有的 remediated-flow publish/update 入口；从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase REST 路径并写出稳定 success/failure artifacts |
+| `tiangong flow publish-version` | 统一 CLI 持有的 remediated-flow publish/update 入口；从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase 目标并通过原生 `@supabase/supabase-js` 写出稳定 success/failure artifacts |
 | `tiangong flow publish-reviewed-data` | 统一 CLI 持有的 reviewed publish preparation 入口；支持 flow unchanged skip、flow/process append-only bump / current-version upsert、process flow-ref rewrite、本地 `publish-report.json` 与兼容的 flow success/failure artifacts |
 | `tiangong flow build-alias-map` | 独立 deterministic alias map 入口；从 old/new flow snapshots 与可选 seed alias map 生成 alias plan、manual queue 与稳定 alias map |
 | `tiangong flow scan-process-flow-refs` | 独立 process ref 扫描入口；对 local process rows 做 scope/catalog/alias 分类并写出 scan artifacts |
@@ -92,7 +92,7 @@ tiangong
 | `tiangong flow apply-process-flow-repairs` | 独立 deterministic repair apply 入口；应用 deterministic subset、写出 patch evidence，并可同步本地 process pool |
 | `tiangong flow regen-product` | 本地治理后 process-side 再生产物入口；在一个命令下执行 scan / repair / apply / validate 并输出稳定 artifacts |
 | `tiangong flow validate-processes` | 本地治理后 patched process rows 的独立校验入口；校验 flow ref-only diff、quantitative reference 稳定性，并可选复用 `tidas-sdk` |
-| `tiangong process get` | 统一 CLI 持有的只读 process 详情读取面；从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase REST 路径并按 `id/version` 读取 |
+| `tiangong process get` | 统一 CLI 持有的只读 process 详情读取面；从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase 目标并通过原生 `@supabase/supabase-js` 按 `id/version` 读取 |
 | `tiangong process auto-build` | 本地 `process_from_flow` intake、run-id 生成、artifact scaffold 预写 |
 | `tiangong process resume-build` | 本地 `process_from_flow` resume handoff、state-lock/manifest 收口、resume 元数据与报告输出 |
 | `tiangong process publish-build` | 本地 `process_from_flow` publish handoff、publish bundle/request/intent 产出、state/invocation/handoff 更新 |
@@ -106,7 +106,7 @@ tiangong
 | `tiangong review process` | 本地 process review、artifact-first 报告输出、可选 CLI LLM 语义审核 |
 | `tiangong review flow` | 本地 flow governance review、rows-file 物化、artifact-first 报告输出、可选 CLI LLM 语义审核 |
 | `tiangong publish run` | 本地 publish 契约归一化、dry-run/commit、report 输出 |
-| `tiangong validation run` | 本地 `tidas-sdk` parity 校验收口 |
+| `tiangong validation run` | 本地 `@tiangong-lca/tidas-sdk` 直接依赖校验收口 |
 | `tiangong admin embedding-run` | `embedding_ft` |
 
 此外，CLI 现在已经正式引入 `tiangong lifecyclemodel ...` 一级命名空间，其中：
@@ -148,7 +148,7 @@ tiangong
 
 注意：
 
-- `process get` 当前固定为 CLI 内部共享的 deterministic direct-read 面，供 lifecyclemodel resulting-process 和后续 review/governance 迁移复用
+- `process get` 当前固定为 CLI 内部共享的 deterministic direct-read 面，内部执行已收口到原生 `@supabase/supabase-js`，供 lifecyclemodel resulting-process 和后续 review/governance 迁移复用
 - 已实现的 `process auto-build` 保留了旧 `artifacts/process_from_flow/<run_id>/`、`cache/process_from_flow_state.json`、`cache/agent_handoff_summary.json` 等运行布局
 - `process auto-build` 当前只负责本地 request intake、flow 归一化、run scaffold 和 manifest/report 预写，不继续执行后续阶段
 - 已实现的 `process resume-build` 保留同一套 run 布局，并把本地 state-lock、run-manifest 校验、resume metadata/history、invocation index 更新统一收口到 CLI
@@ -165,18 +165,18 @@ tiangong
 - 已实现的 `lifecyclemodel publish-build` 继续保留同一套 run 布局，并把本地 publish-bundle/request/intent、validation 摘要复用、invocation index 更新统一收口到 CLI
 - `lifecyclemodel publish-build` 当前只负责本地 publish handoff，不直接执行远端 publish commit 或数据库写入；真正的 dry-run / commit 边界仍由 `tiangong publish run` 负责
 - 已实现的 `build-resulting-process` 和 `publish-resulting-process` 都走本地优先、artifact-first 路径，不依赖 Python 或 MCP
-- `build-resulting-process` 现在还支持一个显式的 deterministic direct-read 补全路径：当 request 打开 `process_sources.allow_remote_lookup=true` 时，CLI 会从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase REST 路径，按 `process_id/version` 直接补齐缺失的 process dataset
+- `build-resulting-process` 现在还支持一个显式的 deterministic direct-read 补全路径：当 request 打开 `process_sources.allow_remote_lookup=true` 时，CLI 会从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase 目标，并通过原生 `@supabase/supabase-js` 按 `process_id/version` 直接补齐缺失的 process dataset
 - `publish-resulting-process` 当前负责生成本地 publish handoff 产物，还没有把提交语义直接并入 `publish run`
 - 已实现的 `lifecyclemodel orchestrate` 把递归装配的 `plan | execute | publish` 三个动作统一收口到 CLI，并直接复用原生 `process auto-build`、`lifecyclemodel auto-build`、`lifecyclemodel build-resulting-process` slices
 - `lifecyclemodel orchestrate` 的 `process_builder` request schema 已删除旧 builder 控制项，只保留 CLI-native 本地构建字段，并在归一化阶段拒绝额外键；不再保留任何 Python fallback 配置面
 - 已实现的 `review process` 保留本地 artifact-first review contract，把规则核查、报告输出和可选 LLM 语义审核统一收口到 CLI；语义审核只使用 `TIANGONG_LCA_LLM_*`，不再透出 `OPENAI_*`
 - 已实现的 `review flow` 保留本地 artifact-first governance review contract，把 flow 摘要、相似对、规则 findings、可选 LLM findings 和双语 markdown 报告统一收口到 CLI；语义审核同样只使用 `TIANGONG_LCA_LLM_*`
 - `review flow` 当前明确不支持 `--with-reference-context`，也还没有接入本地 registry enrichment；这部分仍需后续迁移切片单独落地
-- 已实现的 `flow get` 保留 deterministic direct-read 边界，支持 `id` + 可选 `version/user_id/state_code` 读取；若精确版本 miss，则回退到最新可见版本；若出现多个同版本可见候选，则直接报 ambiguous
-- 已实现的 `flow list` 保留 deterministic direct-read 边界，支持稳定 `id/state_code/type_of_dataset` 过滤、显式 `order=id.asc,version.asc` 默认值，以及 `--all --page-size` 的 offset 分页
+- 已实现的 `flow get` 保留 deterministic direct-read 边界，但内部执行已经收口到原生 `@supabase/supabase-js`；支持 `id` + 可选 `version/user_id/state_code` 读取；若精确版本 miss，则回退到最新可见版本；若出现多个同版本可见候选，则直接报 ambiguous
+- 已实现的 `flow list` 保留 deterministic direct-read 边界，但内部执行已经收口到原生 `@supabase/supabase-js`；支持稳定 `id/state_code/type_of_dataset` 过滤、显式 `order=id.asc,version.asc` 默认值，以及 `--all --page-size` 的 offset 分页
 - 已实现的 `flow remediate` 保留旧 invalid-flow 输入与 round1 artifact 契约，但运行时已经收口到 CLI，不再需要 skill 私有 Python remediation 入口
-- 已实现的 `flow publish-version` 直接从 `TIANGONG_LCA_API_BASE_URL` 推导 `/rest/v1/flows` 写入路径，支持 dry-run/commit，并保留 `mcp_success_list`、`remote_validation_failed`、`mcp_sync_report` 这些历史文件名
-- 已实现的 `flow publish-reviewed-data` 负责 reviewed publish preparation 阶段：支持 `--original-flow-rows-file` unchanged skip、flow/process `skip | append_only_bump | upsert_current_version`、`prepared-flow-rows.json` / `prepared-process-rows.json` / `flow-version-map.json` / `skipped-unchanged-flow-rows.json` / `process-flow-ref-rewrite-evidence.jsonl` / `publish-report.json` 输出，并在 `--commit` 时同时执行 prepared flow rows 与 prepared process rows 的远端写入
+- 已实现的 `flow publish-version` 直接从 `TIANGONG_LCA_API_BASE_URL` 推导 `/rest/v1/flows` 写入目标，并通过原生 `@supabase/supabase-js` 支持 dry-run/commit；同时保留 `mcp_success_list`、`remote_validation_failed`、`mcp_sync_report` 这些历史文件名
+- 已实现的 `flow publish-reviewed-data` 负责 reviewed publish preparation 阶段：支持 `--original-flow-rows-file` unchanged skip、flow/process `skip | append_only_bump | upsert_current_version`、`prepared-flow-rows.json` / `prepared-process-rows.json` / `flow-version-map.json` / `skipped-unchanged-flow-rows.json` / `process-flow-ref-rewrite-evidence.jsonl` / `publish-report.json` 输出，并在 `--commit` 时通过同一条 `@supabase/supabase-js` writer layer 同时执行 prepared flow rows 与 prepared process rows 的远端写入
 - 已实现的 `flow build-alias-map` 把治理链中的 deterministic alias-map 构建切片收口到 CLI，固定 old/new flow snapshots 与可选 `seed-alias-map` 输入契约，并直接写出 `alias-plan.json` / `flow-alias-map.json` / `manual-review-queue.jsonl` / `alias-summary.json`
 - 已实现的 `flow scan-process-flow-refs` 把治理链中的独立 process ref scan 切片收口到 CLI，固定 process/scope/catalog/alias 输入契约，并直接写出 `scan-summary.json` / `scan-findings.json` / `scan-findings.jsonl`
 - 已实现的 `flow plan-process-flow-repairs` 把治理链中的独立 deterministic repair planning 切片收口到 CLI，固定 process/scope/alias/scan 输入契约，并直接写出 `repair-plan.json` / `manual-review-queue.jsonl` / `repair-summary.json`
@@ -641,8 +641,8 @@ tiangong admin embedding-run --input ./jobs.json --dry-run
 
 `validation run` 则固定“统一校验报告层”：
 
-- `auto` 模式走本地 `tidas-sdk` parity validator 的默认路径
-- `sdk` 模式显式固定到同一条 `tidas-sdk` 校验链
+- `auto` 模式走当前默认的 direct-dependency 校验路径，也就是 CLI 内基于 `@tiangong-lca/tidas-sdk` 组装的 package validator
+- `sdk` 模式显式固定到同一条 `@tiangong-lca/tidas-sdk` 校验链
 
 这保证后续 workflow 只依赖 `tiangong validation run`，而不需要在 skill 里自己判断到底调哪个校验器。
 
@@ -650,7 +650,7 @@ tiangong admin embedding-run --input ./jobs.json --dry-run
 
 ### 5.1 统一命名
 
-新的标准变量名：
+公开命令面的标准变量名：
 
 ```bash
 TIANGONG_LCA_API_BASE_URL=
@@ -658,7 +658,7 @@ TIANGONG_LCA_API_KEY=
 TIANGONG_LCA_REGION=us-east-1
 ```
 
-当前已落地命令额外还会按需使用：
+按需启用的可选变量：
 
 ```bash
 TIANGONG_LCA_LLM_BASE_URL=
@@ -666,17 +666,37 @@ TIANGONG_LCA_LLM_API_KEY=
 TIANGONG_LCA_LLM_MODEL=
 ```
 
-这就是当前 CLI 的完整 env 面。
+仓库中已归一化、但当前没有任何公开 `tiangong` 命令消费的 internal/preparatory 变量：
+
+```bash
+TIANGONG_LCA_KB_SEARCH_API_BASE_URL=
+TIANGONG_LCA_KB_SEARCH_API_KEY=
+TIANGONG_LCA_KB_SEARCH_REGION=us-east-1
+
+TIANGONG_LCA_UNSTRUCTURED_API_BASE_URL=
+TIANGONG_LCA_UNSTRUCTURED_API_KEY=
+TIANGONG_LCA_UNSTRUCTURED_PROVIDER=
+TIANGONG_LCA_UNSTRUCTURED_MODEL=
+TIANGONG_LCA_UNSTRUCTURED_CHUNK_TYPE=false
+TIANGONG_LCA_UNSTRUCTURED_RETURN_TXT=true
+```
+
+测试/质量脚本还会使用一个内部开关：
+
+```bash
+TIANGONG_LCA_COVERAGE=0
+```
 
 规则是：
 
-- 只为当前已实现的命令暴露 env
+- 公开命令只暴露当前已实现、且真实消费的 env
+- internal/preparatory 和 test-only env 也要在 `.env.example` 里显式列出，避免代码与文档脱节
 - 不为了历史实现或未来猜测保留 alias
-- CLI 仓库内部即使已经有预备模块，也要等到公开命令真正消费时才把对应 env 纳入契约
+- 不引入 `SUPABASE_URL`、`SUPABASE_KEY`、`TIANGONG_LCA_TIDAS_SDK_DIR` 这类额外兼容层；原生 Supabase client 一律从 `TIANGONG_LCA_API_*` 派生，`@tiangong-lca/tidas-sdk` 一律走直接依赖
 - `review process` 的可选语义审核统一走 `TIANGONG_LCA_LLM_*`，不再引入 `OPENAI_*`
 - `review flow` 的可选语义审核也统一走 `TIANGONG_LCA_LLM_*`，不再引入 `OPENAI_*`
 - `publish run` / `validation run` 都是本地契约与执行收口，不新增远程 env
-- 因此当前不预放 `TIANGONG_KB_*`、`TIANGONG_MINERU_*`、`OPENAI_*` 或 `TIANGONG_LCA_REMOTE_*`
+- `TIANGONG_LCA_KB_SEARCH_*` 与 `TIANGONG_LCA_UNSTRUCTURED_*` 目前只属于 internal/preparatory 层，不属于公开命令契约
 
 命令级 env 矩阵：
 
@@ -692,15 +712,18 @@ TIANGONG_LCA_LLM_MODEL=
 | `lifecyclemodel publish-resulting-process` | 无 |
 | `review process` | 纯规则 review 默认无；若显式开启 `--enable-llm`，则需要 `TIANGONG_LCA_LLM_BASE_URL`、`TIANGONG_LCA_LLM_API_KEY`、`TIANGONG_LCA_LLM_MODEL` |
 | `review flow` | 纯规则 review 默认无；若显式开启 `--enable-llm`，则需要 `TIANGONG_LCA_LLM_BASE_URL`、`TIANGONG_LCA_LLM_API_KEY`、`TIANGONG_LCA_LLM_MODEL` |
+| `review lifecyclemodel` | 无 |
 | `flow get` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
 | `flow list` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
 | `flow remediate` | 无 |
 | `flow publish-version` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
 | `flow publish-reviewed-data` | 本地 dry-run 默认无；若 `--commit` 发布 prepared flow/process rows，则需要 `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
+| `flow build-alias-map` | 无 |
 | `flow scan-process-flow-refs` | 无 |
 | `flow plan-process-flow-repairs` | 无 |
 | `flow apply-process-flow-repairs` | 无 |
 | `flow regen-product` | 无 |
+| `flow validate-processes` | 无 |
 | `publish run` | 无 |
 | `validation run` | 无 |
 

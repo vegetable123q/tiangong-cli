@@ -1,0 +1,448 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { CliError } from '../src/lib/errors.js';
+import type { FetchLike } from '../src/lib/http.js';
+import {
+  buildSupabaseAuthHeaders,
+  createSupabaseDataClient,
+  createSupabaseFetch,
+  deriveSupabaseProjectBaseUrl,
+  deriveSupabaseRestBaseUrl,
+  requireSupabaseRestRuntime,
+  runSupabaseArrayQuery,
+  runSupabaseMutation,
+  runSupabaseQuery,
+} from '../src/lib/supabase-client.js';
+
+type PostgrestErrorLike = {
+  code: string;
+  message: string;
+  details: string | null;
+  hint: string | null;
+};
+
+function makePostgrestError(overrides: Partial<PostgrestErrorLike> = {}): PostgrestErrorLike {
+  return {
+    code: 'PGRST116',
+    message: 'Postgrest failure',
+    details: 'details',
+    hint: 'hint',
+    ...overrides,
+  };
+}
+
+test('requireSupabaseRestRuntime, URL derivation, and auth headers follow the shared env contract', () => {
+  assert.deepEqual(
+    requireSupabaseRestRuntime({
+      TIANGONG_LCA_API_BASE_URL: ' https://example.supabase.co/functions/v1 ',
+      TIANGONG_LCA_API_KEY: ' secret-token ',
+    } as NodeJS.ProcessEnv),
+    {
+      apiBaseUrl: 'https://example.supabase.co/functions/v1',
+      apiKey: 'secret-token',
+    },
+  );
+
+  assert.throws(
+    () => requireSupabaseRestRuntime({} as NodeJS.ProcessEnv),
+    (error) =>
+      error instanceof CliError &&
+      error.code === 'SUPABASE_REST_ENV_REQUIRED' &&
+      JSON.stringify(error.details) ===
+        JSON.stringify({
+          missing: ['TIANGONG_LCA_API_BASE_URL', 'TIANGONG_LCA_API_KEY'],
+        }),
+  );
+
+  assert.equal(
+    deriveSupabaseProjectBaseUrl('https://example.supabase.co/functions/v1'),
+    'https://example.supabase.co',
+  );
+  assert.equal(
+    deriveSupabaseProjectBaseUrl('https://example.supabase.co/rest/v1'),
+    'https://example.supabase.co',
+  );
+  assert.equal(
+    deriveSupabaseProjectBaseUrl('https://example.supabase.co'),
+    'https://example.supabase.co',
+  );
+  assert.equal(
+    deriveSupabaseRestBaseUrl('https://example.supabase.co/functions/v1'),
+    'https://example.supabase.co/rest/v1',
+  );
+  assert.throws(
+    () => deriveSupabaseProjectBaseUrl('https://example.supabase.co/unsupported/path'),
+    (error) => error instanceof CliError && error.code === 'SUPABASE_REST_BASE_URL_INVALID',
+  );
+
+  assert.deepEqual(buildSupabaseAuthHeaders('secret-token'), {
+    Accept: 'application/json',
+    Authorization: 'Bearer secret-token',
+    apikey: 'secret-token',
+  });
+});
+
+test('createSupabaseFetch supports URL and Request input shapes and preserves native Responses', async () => {
+  const nativeResponse = new Response('native-body', {
+    status: 200,
+    headers: {
+      'content-type': 'text/plain',
+    },
+  });
+  const observedUrls: string[] = [];
+  const observedSignals: Array<AbortSignal | undefined> = [];
+  const controller = new AbortController();
+  const urlFetch = createSupabaseFetch(
+    (async (url, init) => {
+      observedUrls.push(url);
+      observedSignals.push(init?.signal as AbortSignal | undefined);
+      return nativeResponse;
+    }) as FetchLike,
+    25,
+  );
+
+  const passthrough = await urlFetch(new URL('https://example.supabase.co/rest/v1/flows'), {
+    signal: controller.signal,
+  });
+  assert.equal(passthrough, nativeResponse);
+  assert.deepEqual(observedUrls, ['https://example.supabase.co/rest/v1/flows']);
+  assert.equal(typeof observedSignals[0]?.aborted, 'boolean');
+
+  let requestUrl = '';
+  let requestMethod = '';
+  const requestFetch = createSupabaseFetch(
+    (async (url, init) => {
+      requestUrl = url;
+      requestMethod = String(init?.method ?? '');
+      return {
+        ok: true,
+        status: 201,
+        headers: {
+          get(name: string) {
+            return name.toLowerCase() === 'content-type' ? 'text/plain' : null;
+          },
+        },
+        text: async () => 'created',
+      };
+    }) as FetchLike,
+    25,
+  );
+
+  const normalized = await requestFetch(
+    new Request('https://example.supabase.co/rest/v1/processes'),
+    {
+      method: 'POST',
+    },
+  );
+  assert.equal(requestUrl, 'https://example.supabase.co/rest/v1/processes');
+  assert.equal(requestMethod, 'POST');
+  assert.equal(normalized.status, 201);
+  assert.equal(await normalized.text(), '');
+});
+
+test('createSupabaseFetch normalizes non-Error transport failures', async () => {
+  const fetchWithFailure = createSupabaseFetch(
+    (async () => {
+      throw 'boom-string';
+    }) as FetchLike,
+    25,
+  );
+
+  await assert.rejects(
+    async () => fetchWithFailure('https://example.supabase.co/rest/v1/flows'),
+    (error) => error instanceof Error && error.message === 'boom-string',
+  );
+
+  const transportError = new Error('boom-error');
+  const fetchWithError = createSupabaseFetch(
+    (async () => {
+      throw transportError;
+    }) as FetchLike,
+    25,
+  );
+
+  await assert.rejects(
+    async () => fetchWithError('https://example.supabase.co/rest/v1/flows'),
+    (error) => error === transportError,
+  );
+});
+
+test('runSupabaseQuery and runSupabaseArrayQuery cover success, null arrays, and wrapped failures', async () => {
+  assert.deepEqual(
+    await runSupabaseQuery(
+      Promise.resolve({
+        data: { ok: true },
+        error: null,
+        status: 200,
+      }),
+      'https://example.supabase.co/rest/v1/flows',
+    ),
+    { ok: true },
+  );
+
+  assert.deepEqual(
+    await runSupabaseArrayQuery(
+      Promise.resolve({
+        data: null,
+        error: null,
+        status: 200,
+      }),
+      'https://example.supabase.co/rest/v1/flows',
+    ),
+    [],
+  );
+
+  await assert.rejects(
+    async () =>
+      runSupabaseQuery(
+        Promise.reject(new SyntaxError('Unexpected token < in JSON at position 0')),
+        'https://example.supabase.co/rest/v1/flows',
+      ),
+    (error) => error instanceof CliError && error.code === 'REMOTE_INVALID_JSON',
+  );
+
+  await assert.rejects(
+    async () =>
+      runSupabaseQuery(
+        Promise.reject(new Error('network down')),
+        'https://example.supabase.co/rest/v1/flows',
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.code === 'REMOTE_REQUEST_FAILED' &&
+      error.details === 'network down',
+  );
+
+  await assert.rejects(
+    async () =>
+      runSupabaseQuery(
+        Promise.reject('query string failure'),
+        'https://example.supabase.co/rest/v1/flows',
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.code === 'REMOTE_REQUEST_FAILED' &&
+      error.details === 'query string failure',
+  );
+
+  const existingCliError = new CliError('already-normalized', {
+    code: 'REMOTE_REQUEST_FAILED',
+    exitCode: 1,
+    details: 'normalized',
+  });
+  await assert.rejects(
+    async () =>
+      runSupabaseQuery(
+        Promise.reject(existingCliError),
+        'https://example.supabase.co/rest/v1/flows',
+      ),
+    (error) => error === existingCliError,
+  );
+
+  await assert.rejects(
+    async () =>
+      runSupabaseQuery(
+        Promise.resolve({
+          data: null,
+          error: makePostgrestError({
+            code: '',
+            message: 'SyntaxError: Unexpected token < in JSON at position 0',
+            details: 'builder invalid json',
+          }) as never,
+          status: 0,
+        }),
+        'https://example.supabase.co/rest/v1/flows',
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.code === 'REMOTE_INVALID_JSON' &&
+      error.details === 'builder invalid json',
+  );
+
+  await assert.rejects(
+    async () =>
+      runSupabaseQuery(
+        Promise.resolve({
+          data: null,
+          error: makePostgrestError({
+            code: '',
+            message: 'SyntaxError: Unexpected token < in JSON at position 0',
+            details: '',
+          }) as never,
+          status: 0,
+        }),
+        'https://example.supabase.co/rest/v1/flows',
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.code === 'REMOTE_INVALID_JSON' &&
+      error.details === 'SyntaxError: Unexpected token < in JSON at position 0',
+  );
+});
+
+test('runSupabaseMutation covers success, CliError passthrough, and wrapped failures', async () => {
+  await runSupabaseMutation(
+    Promise.resolve({
+      error: null,
+      status: 204,
+    }),
+    'https://example.supabase.co/rest/v1/processes',
+  );
+
+  await assert.rejects(
+    async () =>
+      runSupabaseMutation(
+        Promise.reject(new SyntaxError('Unexpected token < in JSON at position 0')),
+        'https://example.supabase.co/rest/v1/processes',
+      ),
+    (error) => error instanceof CliError && error.code === 'REMOTE_INVALID_JSON',
+  );
+
+  await assert.rejects(
+    async () =>
+      runSupabaseMutation(
+        Promise.reject(new Error('mutation transport failed')),
+        'https://example.supabase.co/rest/v1/processes',
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.code === 'REMOTE_REQUEST_FAILED' &&
+      error.details === 'mutation transport failed',
+  );
+
+  await assert.rejects(
+    async () =>
+      runSupabaseMutation(
+        Promise.reject('mutation string failure'),
+        'https://example.supabase.co/rest/v1/processes',
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.code === 'REMOTE_REQUEST_FAILED' &&
+      error.details === 'mutation string failure',
+  );
+
+  const existingCliError = new CliError('already-normalized-mutation', {
+    code: 'REMOTE_REQUEST_FAILED',
+    exitCode: 1,
+    details: 'normalized',
+  });
+  await assert.rejects(
+    async () =>
+      runSupabaseMutation(
+        Promise.reject(existingCliError),
+        'https://example.supabase.co/rest/v1/processes',
+      ),
+    (error) => error === existingCliError,
+  );
+
+  await assert.rejects(
+    async () =>
+      runSupabaseMutation(
+        Promise.resolve({
+          error: makePostgrestError({
+            code: '',
+            message: 'SyntaxError: Unexpected token < in JSON at position 0',
+            details: 'mutation invalid json',
+          }) as never,
+          status: 0,
+        }),
+        'https://example.supabase.co/rest/v1/processes',
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.code === 'REMOTE_INVALID_JSON' &&
+      error.details === 'mutation invalid json',
+  );
+
+  await assert.rejects(
+    async () =>
+      runSupabaseMutation(
+        Promise.resolve({
+          error: makePostgrestError({
+            code: '',
+            message: 'SyntaxError: Unexpected token < in JSON at position 0',
+            details: '',
+          }) as never,
+          status: 0,
+        }),
+        'https://example.supabase.co/rest/v1/processes',
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.code === 'REMOTE_INVALID_JSON' &&
+      error.details === 'SyntaxError: Unexpected token < in JSON at position 0',
+  );
+
+  await assert.rejects(
+    async () =>
+      runSupabaseMutation(
+        Promise.resolve({
+          error: makePostgrestError({
+            code: '23505',
+            message: 'duplicate row',
+            details: 'duplicate process',
+            hint: null,
+          }) as never,
+          status: 409,
+        }),
+        'https://example.supabase.co/rest/v1/processes',
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.code === 'REMOTE_REQUEST_FAILED' &&
+      JSON.stringify(error.details) ===
+        JSON.stringify({
+          code: '23505',
+          message: 'duplicate row',
+          details: 'duplicate process',
+          hint: null,
+        }),
+  );
+
+  await assert.rejects(
+    async () =>
+      runSupabaseMutation(
+        Promise.resolve({
+          error: makePostgrestError({
+            code: '23505',
+            message: 'duplicate key value violates unique constraint',
+            details: 'duplicate row',
+            hint: 'retry',
+          }) as never,
+          status: 409,
+        }),
+        'https://example.supabase.co/rest/v1/flows',
+      ),
+    (error) =>
+      error instanceof CliError &&
+      error.code === 'REMOTE_REQUEST_FAILED' &&
+      JSON.stringify(error.details) ===
+        JSON.stringify({
+          code: '23505',
+          message: 'duplicate key value violates unique constraint',
+          details: 'duplicate row',
+          hint: 'retry',
+        }),
+  );
+});
+
+test('createSupabaseDataClient returns a configured rest base URL', () => {
+  const { client, restBaseUrl } = createSupabaseDataClient(
+    {
+      apiBaseUrl: 'https://example.supabase.co/functions/v1',
+      apiKey: 'secret-token',
+    },
+    (async () =>
+      new Response('[]', {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+        },
+      })) as FetchLike,
+    25,
+  );
+
+  assert.ok(client);
+  assert.equal(restBaseUrl, 'https://example.supabase.co/rest/v1');
+});

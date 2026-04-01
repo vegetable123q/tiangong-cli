@@ -315,6 +315,64 @@ test('runFlowPublishVersion commit executes update, insert, fallback update, and
   }
 });
 
+test('__testInternals.parse_response reports HTTP failures, empty bodies, and invalid JSON', async () => {
+  await assert.rejects(
+    async () =>
+      __testInternals.parse_response(
+        {
+          ok: false,
+          status: 503,
+          headers: {
+            get: () => 'text/plain',
+          },
+          text: async () => 'service unavailable',
+        },
+        'https://example.supabase.co/rest/v1/flows',
+      ),
+    (error) => {
+      assert.ok(error instanceof CliError);
+      assert.equal(error.code, 'REMOTE_REQUEST_FAILED');
+      assert.equal(error.details, 'service unavailable');
+      return true;
+    },
+  );
+
+  assert.equal(
+    await __testInternals.parse_response(
+      {
+        ok: true,
+        status: 200,
+        headers: {
+          get: () => 'application/json',
+        },
+        text: async () => '',
+      },
+      'https://example.supabase.co/rest/v1/flows',
+    ),
+    null,
+  );
+
+  await assert.rejects(
+    async () =>
+      __testInternals.parse_response(
+        {
+          ok: true,
+          status: 200,
+          headers: {
+            get: () => 'application/json',
+          },
+          text: async () => '{invalid-json',
+        },
+        'https://example.supabase.co/rest/v1/flows',
+      ),
+    (error) => {
+      assert.ok(error instanceof CliError);
+      assert.equal(error.code, 'REMOTE_INVALID_JSON');
+      return true;
+    },
+  );
+});
+
 test('runFlowPublishVersion can fall back to process.env and global fetch and respect limit', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-flow-publish-version-global-'));
   const inputFile = path.join(dir, 'ready-flows.jsonl');

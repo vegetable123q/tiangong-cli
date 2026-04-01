@@ -286,6 +286,48 @@ test('runFlowReviewedPublishData writes flow-only dry-run artifacts and skips un
   }
 });
 
+test('__testInternals.normalize_process_commit_failure prefers transport details when available', () => {
+  assert.equal(
+    __testInternals.normalize_process_commit_failure(
+      new CliError('HTTP 0 returned from https://example.supabase.co/rest/v1/processes', {
+        code: 'REMOTE_REQUEST_FAILED',
+        exitCode: 1,
+        details: 'socket hang up',
+      }),
+    ),
+    'socket hang up',
+  );
+
+  assert.equal(
+    __testInternals.normalize_process_commit_failure(
+      new CliError('HTTP 0 returned from https://example.supabase.co/rest/v1/processes', {
+        code: 'REMOTE_REQUEST_FAILED',
+        exitCode: 1,
+        details: {
+          message: 'FetchError: connection reset by peer',
+        },
+      }),
+    ),
+    'connection reset by peer',
+  );
+
+  assert.equal(
+    __testInternals.normalize_process_commit_failure(new Error('fallback-error')),
+    'fallback-error',
+  );
+  assert.equal(
+    __testInternals.normalize_process_commit_failure(
+      new CliError('HTTP 0 returned from https://example.supabase.co/rest/v1/processes', {
+        code: 'REMOTE_REQUEST_FAILED',
+        exitCode: 1,
+        details: {},
+      }),
+    ),
+    'HTTP 0 returned from https://example.supabase.co/rest/v1/processes',
+  );
+  assert.deepEqual(__testInternals.normalize_process_commit_failure({ raw: true }), { raw: true });
+});
+
 test('runFlowReviewedPublishData delegates commit publish to flow publish-version and maps results back into publish-report', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-flow-publish-reviewed-commit-'));
   const flowRowsFile = path.join(dir, 'reviewed-flows.jsonl');

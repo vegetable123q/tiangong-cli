@@ -1,0 +1,118 @@
+{
+  "flowDataSet": {
+    "@xmlns": "http://lca.jrc.it/ILCD/Flow",
+    "@version": "1.1",
+    "@xmlns:ecn": "http://eplca.jrc.ec.europa.eu/ILCD/Extensions/2018/ECNumber",
+    "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+    "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
+    "flowProperties": {
+      "flowProperty": {
+        "meanValue": "1.0",
+        "@dataSetInternalID": "0",
+        "referenceToFlowPropertyDataSet": {
+          "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+          "@type": "flow property data set",
+          "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "common:shortDescription": {
+            "#text": "Mass",
+            "@xml:lang": "en"
+          }
+        }
+      }
+    },
+    "flowInformation": {
+      "dataSetInformation": {
+        "name": {
+          "baseName": [
+            {
+              "#text": "2-chloro-3-methyl-4-(methylsulfonyl) benzoic acid",
+              "@xml:lang": "en"
+            },
+            {
+              "#text": "2-\u6c2f-3-\u7532\u57fa-4-(\u7532\u78fa\u9170\u57fa)\u82ef\u7532\u9178",
+              "@xml:lang": "zh"
+            }
+          ]
+        },
+        "CASNumber": "106904-09-0",
+        "common:UUID": "4d8a3345-51fd-44ac-87e0-59bc8d3b0fdc",
+        "common:other": {
+          "ecn:ECNumber": "600-786-0"
+        },
+        "common:synonyms": [
+          {
+            "#text": "organic;benzoicacid,2-chloro-3-methyl-4-(methylsulfonyl)-",
+            "@xml:lang": "en"
+          },
+          {
+            "#text": "\u6709\u673a\u7269;\u82ef\u7532\u9178,2-\u6c2f-3-\u7532\u57fa-4-(\u7532\u78fa\u9170\u57fa)-",
+            "@xml:lang": "zh"
+          }
+        ],
+        "common:generalComment": {
+          "#text": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "@xml:lang": "en"
+        },
+        "classificationInformation": {
+          "common:elementaryFlowCategorization": {
+            "common:category": [
+              {
+                "#text": "Emissions",
+                "@level": "0"
+              },
+              {
+                "#text": "Emissions to air",
+                "@level": "1"
+              },
+              {
+                "#text": "Emissions to lower stratosphere and upper troposphere",
+                "@level": "2"
+              }
+            ]
+          }
+        }
+      },
+      "quantitativeReference": {
+        "referenceToReferenceFlowProperty": "0"
+      }
+    },
+    "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/Flow ../../schemas/ILCD_FlowDataSet.xsd",
+    "modellingAndValidation": {
+      "LCIMethod": {
+        "typeOfDataSet": "Elementary flow"
+      },
+      "complianceDeclarations": {
+        "compliance": {
+          "common:approvalOfOverallCompliance": "Fully compliant",
+          "common:referenceToComplianceSystem": {
+            "@uri": "../sources/9ba3ac1e-6797-4cc0-afd5-1b8f7bf28c6a.xml",
+            "@type": "source data set",
+            "@refObjectId": "9ba3ac1e-6797-4cc0-afd5-1b8f7bf28c6a",
+            "common:shortDescription": {
+              "#text": "ILCD Data Network - compliance (non-Process)",
+              "@xml:lang": "en"
+            }
+          }
+        }
+      }
+    },
+    "administrativeInformation": {
+      "dataEntryBy": {
+        "common:timeStamp": "2018-07-12T15:52:21.041+01:00",
+        "common:referenceToDataSetFormat": {
+          "@uri": "../sources/a97a0155-0234-4b87-b4ce-a45da52f2a40.xml",
+          "@type": "source data set",
+          "@refObjectId": "a97a0155-0234-4b87-b4ce-a45da52f2a40",
+          "common:shortDescription": {
+            "#text": "ILCD format",
+            "@xml:lang": "en"
+          }
+        }
+      },
+      "publicationAndOwnership": {
+        "common:dataSetVersion": "00.00.002",
+        "common:permanentDataSetURI": "http://eplca.jrc.ec.europa.eu/EF-node/resource/flows/4d8a3345-51fd-44ac-87e0-59bc8d3b0fdc.xml"
+      }
+    }
+  }
+}

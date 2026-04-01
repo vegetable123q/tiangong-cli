@@ -10,7 +10,12 @@ import {
   type JsonRecord,
 } from './flow-governance.js';
 import type { FetchLike, ResponseLike } from './http.js';
-import { deriveSupabaseRestBaseUrl, requireSupabaseRestRuntime } from './supabase-rest.js';
+import {
+  createSupabaseDataClient,
+  requireSupabaseRestRuntime,
+  runSupabaseArrayQuery,
+  runSupabaseMutation,
+} from './supabase-client.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_WORKERS = 4;
@@ -40,6 +45,8 @@ type VisibleFlowRow = {
   user_id: string;
   state_code: number | null;
 };
+
+type SupabaseDataClient = ReturnType<typeof createSupabaseDataClient>['client'];
 
 type FlowPublishFailureRow = {
   id: unknown;
@@ -247,18 +254,6 @@ function resolve_target_user_id(
   return normalize_token(coerceText(row.user_id)) ?? targetUserIdOverride;
 }
 
-function build_headers(
-  apiKey: string,
-  extraHeaders: Record<string, string> = {},
-): Record<string, string> {
-  return {
-    Accept: 'application/json',
-    Authorization: `Bearer ${apiKey}`,
-    apikey: apiKey,
-    ...extraHeaders,
-  };
-}
-
 function build_visible_rows_url(restBaseUrl: string, id: string, version: string): string {
   const url = new URL(`${restBaseUrl.replace(/\/+$/u, '')}/flows`);
   url.searchParams.set('select', 'id,version,user_id,state_code');
@@ -305,24 +300,6 @@ async function parse_response(response: ResponseLike, url: string): Promise<unkn
   return rawText;
 }
 
-async function request_json(options: {
-  method: 'GET' | 'POST' | 'PATCH';
-  url: string;
-  headers: Record<string, string>;
-  body?: unknown;
-  timeoutMs: number;
-  fetchImpl: FetchLike;
-}): Promise<unknown> {
-  const signal = AbortSignal.timeout(options.timeoutMs);
-  const response = await options.fetchImpl(options.url, {
-    method: options.method,
-    headers: options.headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    signal,
-  });
-  return parse_response(response, options.url);
-}
-
 function parse_visible_rows(payload: unknown, url: string): VisibleFlowRow[] {
   if (!Array.isArray(payload)) {
     throw new CliError(`Supabase REST response was not a JSON array for ${url}`, {
@@ -351,21 +328,20 @@ function parse_visible_rows(payload: unknown, url: string): VisibleFlowRow[] {
 }
 
 async function visible_exact_rows(options: {
+  client: SupabaseDataClient;
   restBaseUrl: string;
-  apiKey: string;
   id: string;
   version: string;
-  timeoutMs: number;
-  fetchImpl: FetchLike;
 }): Promise<VisibleFlowRow[]> {
   const url = build_visible_rows_url(options.restBaseUrl, options.id, options.version);
-  const payload = await request_json({
-    method: 'GET',
+  const payload = await runSupabaseArrayQuery(
+    options.client
+      .from('flows')
+      .select('id,version,user_id,state_code')
+      .eq('id', options.id)
+      .eq('version', options.version),
     url,
-    headers: build_headers(options.apiKey),
-    timeoutMs: options.timeoutMs,
-    fetchImpl: options.fetchImpl,
-  });
+  );
   return parse_visible_rows(payload, url);
 }
 
@@ -469,60 +445,46 @@ function build_error_reasons(stage: string, error: unknown): FlowPublishFailureR
 }
 
 async function insert_flow_version(options: {
+  client: SupabaseDataClient;
   restBaseUrl: string;
-  apiKey: string;
   rowId: string;
   payload: JsonRecord;
-  timeoutMs: number;
-  fetchImpl: FetchLike;
 }): Promise<void> {
-  await request_json({
-    method: 'POST',
-    url: `${options.restBaseUrl.replace(/\/+$/u, '')}/flows`,
-    headers: build_headers(options.apiKey, {
-      'Content-Type': 'application/json',
-      Prefer: 'return=representation',
-    }),
-    body: {
+  const url = `${options.restBaseUrl.replace(/\/+$/u, '')}/flows`;
+  await runSupabaseMutation(
+    options.client.from('flows').insert({
       id: options.rowId,
       json_ordered: options.payload,
-    },
-    timeoutMs: options.timeoutMs,
-    fetchImpl: options.fetchImpl,
-  });
+    }),
+    url,
+  );
 }
 
 async function update_flow_version(options: {
+  client: SupabaseDataClient;
   restBaseUrl: string;
-  apiKey: string;
   rowId: string;
   version: string;
   payload: JsonRecord;
-  timeoutMs: number;
-  fetchImpl: FetchLike;
 }): Promise<void> {
-  await request_json({
-    method: 'PATCH',
-    url: build_update_url(options.restBaseUrl, options.rowId, options.version),
-    headers: build_headers(options.apiKey, {
-      'Content-Type': 'application/json',
-      Prefer: 'return=representation',
-    }),
-    body: {
-      json_ordered: options.payload,
-    },
-    timeoutMs: options.timeoutMs,
-    fetchImpl: options.fetchImpl,
-  });
+  const url = build_update_url(options.restBaseUrl, options.rowId, options.version);
+  await runSupabaseMutation(
+    options.client
+      .from('flows')
+      .update({
+        json_ordered: options.payload,
+      })
+      .eq('id', options.rowId)
+      .eq('version', options.version),
+    url,
+  );
 }
 
 async function sync_one_row(options: {
   row: JsonRecord;
   mode: FlowPublishMode;
+  client: SupabaseDataClient;
   restBaseUrl: string;
-  apiKey: string;
-  timeoutMs: number;
-  fetchImpl: FetchLike;
   targetUserIdOverride: string | null;
 }): Promise<FlowPublishOutcome> {
   try {
@@ -537,12 +499,10 @@ async function sync_one_row(options: {
     const version = flow_version(payload);
     const targetUserId = resolve_target_user_id(options.row, options.targetUserIdOverride);
     const visibleBefore = await visible_exact_rows({
+      client: options.client,
       restBaseUrl: options.restBaseUrl,
-      apiKey: options.apiKey,
       id: rowId,
       version,
-      timeoutMs: options.timeoutMs,
-      fetchImpl: options.fetchImpl,
     });
     const ownBefore = own_visible_row(visibleBefore, targetUserId);
 
@@ -580,13 +540,11 @@ async function sync_one_row(options: {
 
     if (ownBefore) {
       await update_flow_version({
+        client: options.client,
         restBaseUrl: options.restBaseUrl,
-        apiKey: options.apiKey,
         rowId,
         version,
         payload,
-        timeoutMs: options.timeoutMs,
-        fetchImpl: options.fetchImpl,
       });
       return {
         status: 'success',
@@ -610,12 +568,10 @@ async function sync_one_row(options: {
 
     try {
       await insert_flow_version({
+        client: options.client,
         restBaseUrl: options.restBaseUrl,
-        apiKey: options.apiKey,
         rowId,
         payload,
-        timeoutMs: options.timeoutMs,
-        fetchImpl: options.fetchImpl,
       });
       return {
         status: 'success',
@@ -627,24 +583,20 @@ async function sync_one_row(options: {
       };
     } catch (error) {
       const visibleAfter = await visible_exact_rows({
+        client: options.client,
         restBaseUrl: options.restBaseUrl,
-        apiKey: options.apiKey,
         id: rowId,
         version,
-        timeoutMs: options.timeoutMs,
-        fetchImpl: options.fetchImpl,
       });
       const ownAfter = own_visible_row(visibleAfter, targetUserId);
       if (ownAfter) {
         try {
           await update_flow_version({
+            client: options.client,
             restBaseUrl: options.restBaseUrl,
-            apiKey: options.apiKey,
             rowId,
             version,
             payload,
-            timeoutMs: options.timeoutMs,
-            fetchImpl: options.fetchImpl,
           });
           return {
             status: 'success',
@@ -735,9 +687,9 @@ export async function runFlowPublishVersion(
     'FLOW_PUBLISH_VERSION_LIMIT_INVALID',
   );
   const runtime = requireSupabaseRestRuntime(options.env ?? process.env);
-  const restBaseUrl = deriveSupabaseRestBaseUrl(runtime.apiBaseUrl);
   const fetchImpl = options.fetchImpl ?? (fetch as FetchLike);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const { client, restBaseUrl } = createSupabaseDataClient(runtime, fetchImpl, timeoutMs);
   const targetUserIdOverride = normalize_token(options.targetUserId ?? null);
   const files = build_output_files(outDir);
 
@@ -756,10 +708,8 @@ export async function runFlowPublishVersion(
     sync_one_row({
       row,
       mode,
+      client,
       restBaseUrl,
-      apiKey: runtime.apiKey,
-      timeoutMs,
-      fetchImpl,
       targetUserIdOverride,
     }),
   );

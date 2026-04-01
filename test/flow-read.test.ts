@@ -279,3 +279,76 @@ test('fetchOneFlowRow can return null when exact lookup misses without fallback'
   assert.equal(observedUrls.length, 1);
   assert.match(observedUrls[0] as string, /version=eq\.01\.00\.001/u);
 });
+
+test('listFlowRows applies single dataset filters and ignores empty order fragments', async () => {
+  const observedUrls: string[] = [];
+  const result = await listFlowRows({
+    runtime,
+    filters: {
+      typeOfDataset: [' Product flow '],
+      order: ' , .desc , id.desc ',
+      limit: 2,
+    },
+    timeoutMs: 99,
+    fetchImpl: jsonFetch([[]], observedUrls),
+  });
+
+  const url = new URL(observedUrls[0] as string);
+  assert.deepEqual(result.rows, []);
+  assert.equal(
+    url.searchParams.get('json->flowDataSet->modellingAndValidation->LCIMethod->>typeOfDataSet'),
+    'eq.Product flow',
+  );
+  assert.equal(url.searchParams.get('order'), 'id.desc');
+  assert.equal(url.searchParams.get('limit'), '2');
+  assert.equal(url.searchParams.get('offset'), null);
+  assert.equal(observedUrls.length, 1);
+});
+
+test('listFlowRows omits empty order and pagination when filters are blank', async () => {
+  const observedUrls: string[] = [];
+  const result = await listFlowRows({
+    runtime,
+    filters: {
+      order: '   ',
+      limit: 0,
+      offset: -1,
+    },
+    timeoutMs: 99,
+    fetchImpl: jsonFetch([[]], observedUrls),
+  });
+
+  const url = new URL(result.sourceUrl);
+  assert.deepEqual(result.rows, []);
+  assert.equal(url.searchParams.get('order'), null);
+  assert.equal(url.searchParams.get('limit'), null);
+  assert.equal(url.searchParams.get('offset'), null);
+  assert.deepEqual(observedUrls, [result.sourceUrl]);
+});
+
+test('listFlowRows handles nullish order values and explicit null ordering modifiers', async () => {
+  const noOrderUrls: string[] = [];
+  await listFlowRows({
+    runtime,
+    filters: {},
+    timeoutMs: 99,
+    fetchImpl: jsonFetch([[]], noOrderUrls),
+  });
+
+  const noOrderUrl = new URL(noOrderUrls[0] as string);
+  assert.equal(noOrderUrl.searchParams.get('order'), null);
+
+  const orderedUrls: string[] = [];
+  await listFlowRows({
+    runtime,
+    filters: {
+      order: 'id.asc.nullsfirst,version.desc.nullslast',
+    },
+    timeoutMs: 99,
+    fetchImpl: jsonFetch([[]], orderedUrls),
+  });
+
+  const orderedUrl = new URL(orderedUrls[0] as string);
+  assert.match(orderedUrl.toString(), /nullsfirst/u);
+  assert.match(orderedUrl.toString(), /nullslast/u);
+});
