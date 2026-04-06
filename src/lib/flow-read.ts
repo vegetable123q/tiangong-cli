@@ -4,7 +4,7 @@ import {
   buildSupabaseAuthHeaders,
   createSupabaseDataClient,
   runSupabaseArrayQuery,
-  type SupabaseRestRuntime,
+  type SupabaseDataRuntime,
 } from './supabase-client.js';
 
 type JsonObject = Record<string, unknown>;
@@ -50,8 +50,8 @@ function isRecord(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function buildHeaders(apiKey: string): Record<string, string> {
-  return buildSupabaseAuthHeaders(apiKey);
+function buildHeaders(publishableKey: string, accessToken: string): Record<string, string> {
+  return buildSupabaseAuthHeaders(publishableKey, accessToken);
 }
 
 function normalizeTokenList(values: readonly string[] | undefined): string[] {
@@ -233,7 +233,7 @@ function applyOrder<Query extends { order: (column: string, options?: object) =>
 }
 
 async function listFlowRows(options: {
-  runtime: SupabaseRestRuntime;
+  runtime: SupabaseDataRuntime;
   filters: FlowListQueryFilters;
   timeoutMs: number;
   fetchImpl: FetchLike;
@@ -316,7 +316,7 @@ function latestRowsAreAmbiguous(rows: SupabaseFlowRow[]): boolean {
 }
 
 async function fetchOneFlowRow(options: {
-  runtime: SupabaseRestRuntime;
+  runtime: SupabaseDataRuntime;
   id: string;
   version?: string | null;
   userId?: string | null;
@@ -441,4 +441,4 @@ export const __testInternals = {
   parseFlowRows,
 };
 
-export type { SupabaseRestRuntime };
+export type { SupabaseDataRuntime };

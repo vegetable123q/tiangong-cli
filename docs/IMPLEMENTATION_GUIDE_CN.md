@@ -656,7 +656,19 @@ tiangong admin embedding-run --input ./jobs.json --dry-run
 TIANGONG_LCA_API_BASE_URL=
 TIANGONG_LCA_API_KEY=
 TIANGONG_LCA_REGION=us-east-1
+TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY=
+TIANGONG_LCA_SESSION_FILE=
+TIANGONG_LCA_DISABLE_SESSION_CACHE=false
+TIANGONG_LCA_FORCE_REAUTH=false
 ```
+
+其中：
+
+- `TIANGONG_LCA_API_KEY` 是 TianGong 账户页生成的用户 API Key，不是 Supabase project key
+- CLI 只把它当作 bootstrap 凭证，本地解码后调用 Supabase auth 换取用户 session
+- 运行时统一使用 access token，既用于 Edge Functions，也用于 direct Supabase
+- `TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` 是 authenticated CLI 命令的必需项
+- `TIANGONG_LCA_SESSION_FILE`、`TIANGONG_LCA_DISABLE_SESSION_CACHE`、`TIANGONG_LCA_FORCE_REAUTH` 是可选 session cache 控制项
 
 按需启用的可选 review-only 变量：只有显式启用 `tiangong review process --enable-llm` 或 `tiangong review flow --enable-llm` 时才需要配置。`TIANGONG_LCA_REVIEW_LLM_BASE_URL` 应指向 OpenAI-compatible Responses API 根地址，CLI 会向 `<base_url>/responses` 发请求。
 
@@ -692,7 +704,7 @@ TIANGONG_LCA_COVERAGE=0
 - 公开命令只暴露当前已实现、且真实消费的 env
 - internal/preparatory 和 test-only env 也要在 `.env.example` 里显式列出，避免代码与文档脱节
 - 不为了历史实现或未来猜测保留 alias
-- 不引入 `SUPABASE_URL`、`SUPABASE_KEY`、`TIANGONG_LCA_TIDAS_SDK_DIR` 这类额外兼容层；原生 Supabase client 一律从 `TIANGONG_LCA_API_*` 派生，`@tiangong-lca/tidas-sdk` 一律走直接依赖
+- 不引入 `SUPABASE_URL`、`SUPABASE_KEY`、`TIANGONG_LCA_TIDAS_SDK_DIR` 这类额外兼容层；原生 Supabase client 一律从 `TIANGONG_LCA_API_BASE_URL` 派生，用户 session 一律从 `TIANGONG_LCA_API_KEY + TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` 换取，`@tiangong-lca/tidas-sdk` 一律走直接依赖
 - `review process` 的可选语义审核统一走 review-only 的 `TIANGONG_LCA_REVIEW_LLM_*`，不再引入 `OPENAI_*`
 - `review flow` 的可选语义审核也统一走 review-only 的 `TIANGONG_LCA_REVIEW_LLM_*`，不再引入 `OPENAI_*`
 - `publish run` / `validation run` 都是本地契约与执行收口，不新增远程 env
@@ -703,21 +715,21 @@ TIANGONG_LCA_COVERAGE=0
 | 命令组 | 必需 env |
 | --- | --- | --- | --- | --- |
 | `doctor` | 无 |
-| `search flow | process | lifecyclemodel` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`（`TIANGONG_LCA_REGION` 可选） |
-| `admin embedding-run` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`（`TIANGONG_LCA_REGION` 可选） |
-| `process get` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
+| `search flow | process | lifecyclemodel` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY`（`TIANGONG_LCA_REGION` 可选） |
+| `admin embedding-run` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY`（`TIANGONG_LCA_REGION` 可选） |
+| `process get` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
 | `process auto-build | resume-build | publish-build | batch-build` | 无 |
 | `lifecyclemodel auto-build | validate-build | publish-build | orchestrate` | 无 |
-| `lifecyclemodel build-resulting-process` | 本地运行默认无；若 request 开启 `process_sources.allow_remote_lookup=true`，则需要 `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
+| `lifecyclemodel build-resulting-process` | 本地运行默认无；若 request 开启 `process_sources.allow_remote_lookup=true`，则需要 `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
 | `lifecyclemodel publish-resulting-process` | 无 |
 | `review process` | 纯规则 review 默认无；若显式开启 `--enable-llm`，则需要 `TIANGONG_LCA_REVIEW_LLM_BASE_URL`、`TIANGONG_LCA_REVIEW_LLM_API_KEY`、`TIANGONG_LCA_REVIEW_LLM_MODEL` |
 | `review flow` | 纯规则 review 默认无；若显式开启 `--enable-llm`，则需要 `TIANGONG_LCA_REVIEW_LLM_BASE_URL`、`TIANGONG_LCA_REVIEW_LLM_API_KEY`、`TIANGONG_LCA_REVIEW_LLM_MODEL` |
 | `review lifecyclemodel` | 无 |
-| `flow get` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
-| `flow list` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
+| `flow get` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
+| `flow list` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
 | `flow remediate` | 无 |
-| `flow publish-version` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
-| `flow publish-reviewed-data` | 本地 dry-run 默认无；若 `--commit` 发布 prepared flow/process rows，则需要 `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
+| `flow publish-version` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
+| `flow publish-reviewed-data` | 本地 dry-run 默认无；若 `--commit` 发布 prepared flow/process rows，则需要 `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
 | `flow build-alias-map` | 无 |
 | `flow scan-process-flow-refs` | 无 |
 | `flow plan-process-flow-repairs` | 无 |

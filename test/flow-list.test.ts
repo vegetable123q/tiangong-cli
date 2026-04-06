@@ -3,10 +3,19 @@ import assert from 'node:assert/strict';
 import { CliError } from '../src/lib/errors.js';
 import type { FetchLike } from '../src/lib/http.js';
 import { __testInternals, runFlowList } from '../src/lib/flow-list.js';
+import {
+  buildSupabaseTestEnv,
+  isSupabaseAuthTokenUrl,
+  makeSupabaseAuthResponse,
+} from './helpers/supabase-auth.js';
 
 function jsonFetch(responses: unknown[], observedUrls: string[] = []): FetchLike {
   let index = 0;
   return (async (input) => {
+    if (isSupabaseAuthTokenUrl(String(input))) {
+      return makeSupabaseAuthResponse();
+    }
+
     observedUrls.push(String(input));
     const next = responses[Math.min(index, responses.length - 1)];
     index += 1;
@@ -33,10 +42,9 @@ test('runFlowList returns one deterministic page of flow rows', async () => {
     offset: 2,
     order: 'version.desc,id.asc',
     now: new Date('2026-03-30T00:00:00.000Z'),
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/functions/v1',
-      TIANGONG_LCA_API_KEY: 'secret-token',
-    } as NodeJS.ProcessEnv,
+    }),
     fetchImpl: jsonFetch(
       [
         [
@@ -94,10 +102,9 @@ test('runFlowList auto-pages when --all is enabled', async () => {
     ids: ['flow-1'],
     all: true,
     pageSize: 2,
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/rest/v1',
-      TIANGONG_LCA_API_KEY: 'secret-token',
-    } as NodeJS.ProcessEnv,
+    }),
     fetchImpl: jsonFetch(
       [
         [
@@ -148,10 +155,9 @@ test('runFlowList uses the default page size when --all omits pageSize', async (
   const report = await runFlowList({
     ids: ['flow-1'],
     all: true,
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/rest/v1',
-      TIANGONG_LCA_API_KEY: 'secret-token',
-    } as NodeJS.ProcessEnv,
+    }),
     fetchImpl: jsonFetch([[]]),
   });
 
@@ -164,27 +170,39 @@ test('runFlowList can fall back to process.env and global fetch', async () => {
   const originalFetch = globalThis.fetch;
   const originalBaseUrl = process.env.TIANGONG_LCA_API_BASE_URL;
   const originalApiKey = process.env.TIANGONG_LCA_API_KEY;
+  const originalPublishableKey = process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+  const testEnv = buildSupabaseTestEnv({
+    TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
+    TIANGONG_LCA_API_KEY: 'secret-token',
+  });
 
-  process.env.TIANGONG_LCA_API_BASE_URL = 'https://example.supabase.co';
-  process.env.TIANGONG_LCA_API_KEY = 'secret-token';
-  globalThis.fetch = (async () => ({
-    ok: true,
-    status: 200,
-    headers: {
-      get: () => 'application/json',
-    },
-    text: async () =>
-      JSON.stringify([
-        {
-          id: 'flow-1',
-          version: '01.00.001',
-          user_id: null,
-          state_code: null,
-          modified_at: null,
-          json: { flowDataSet: { id: 'flow-1' } },
-        },
-      ]),
-  })) as unknown as typeof fetch;
+  process.env.TIANGONG_LCA_API_BASE_URL = testEnv.TIANGONG_LCA_API_BASE_URL;
+  process.env.TIANGONG_LCA_API_KEY = testEnv.TIANGONG_LCA_API_KEY;
+  process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY = testEnv.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    if (isSupabaseAuthTokenUrl(String(input))) {
+      return makeSupabaseAuthResponse();
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get: () => 'application/json',
+      },
+      text: async () =>
+        JSON.stringify([
+          {
+            id: 'flow-1',
+            version: '01.00.001',
+            user_id: null,
+            state_code: null,
+            modified_at: null,
+            json: { flowDataSet: { id: 'flow-1' } },
+          },
+        ]),
+    };
+  }) as unknown as typeof fetch;
 
   try {
     const report = await runFlowList({});
@@ -204,14 +222,18 @@ test('runFlowList can fall back to process.env and global fetch', async () => {
     } else {
       process.env.TIANGONG_LCA_API_KEY = originalApiKey;
     }
+    if (originalPublishableKey === undefined) {
+      delete process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+    } else {
+      process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY = originalPublishableKey;
+    }
   }
 });
 
 test('runFlowList rejects conflicting and invalid pagination controls', async () => {
-  const env = {
+  const env = buildSupabaseTestEnv({
     TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
-    TIANGONG_LCA_API_KEY: 'secret-token',
-  } as NodeJS.ProcessEnv;
+  });
 
   await assert.rejects(
     () =>

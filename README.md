@@ -113,7 +113,13 @@ Current public CLI env contract:
 TIANGONG_LCA_API_BASE_URL=
 TIANGONG_LCA_API_KEY=
 TIANGONG_LCA_REGION=us-east-1
+TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY=
+TIANGONG_LCA_SESSION_FILE=
+TIANGONG_LCA_DISABLE_SESSION_CACHE=false
+TIANGONG_LCA_FORCE_REAUTH=false
 ```
+
+`TIANGONG_LCA_API_KEY` is the TianGong user API key generated from the account page, not a Supabase project key. The CLI uses it only as a bootstrap credential, exchanges it for a user session with `TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY`, then reuses the resolved access token for both Edge Functions and direct Supabase access.
 
 Optional review-only env block: ignore it unless `tiangong review process --enable-llm` or `tiangong review flow --enable-llm` is enabled. `TIANGONG_LCA_REVIEW_LLM_BASE_URL` must point to an OpenAI-compatible Responses API base URL; the CLI calls `<base_url>/responses`.
 
@@ -138,16 +144,16 @@ TIANGONG_LCA_UNSTRUCTURED_CHUNK_TYPE=false
 TIANGONG_LCA_UNSTRUCTURED_RETURN_TXT=true
 ```
 
-No extra `SUPABASE_*` or `TIANGONG_LCA_TIDAS_SDK_DIR` env is required. The CLI derives the native `@supabase/supabase-js` client from `TIANGONG_LCA_API_*`, and it loads `@tiangong-lca/tidas-sdk` directly from `package.json` dependencies.
+No extra generic `SUPABASE_URL`, `SUPABASE_KEY`, or `TIANGONG_LCA_TIDAS_SDK_DIR` env is required. The CLI derives the native `@supabase/supabase-js` client from `TIANGONG_LCA_API_BASE_URL`, bootstraps the user session from `TIANGONG_LCA_API_KEY` plus `TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY`, and loads `@tiangong-lca/tidas-sdk` directly from `package.json` dependencies.
 
 Command-level env reality:
 
 | Command group | Required env |
 | --- | --- |
 | `doctor` | none |
-| `search *` | `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY`, optional `TIANGONG_LCA_REGION` |
-| `admin embedding-run` | `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY`, optional `TIANGONG_LCA_REGION` |
-| `process get` | `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY` |
+| `search *` | `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY`, `TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY`, optional `TIANGONG_LCA_REGION` |
+| `admin embedding-run` | `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY`, `TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY`, optional `TIANGONG_LCA_REGION` |
+| `process get` | `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY`, `TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
 | `process auto-build` | none |
 | `process resume-build` | none |
 | `process publish-build` | none |
@@ -156,16 +162,16 @@ Command-level env reality:
 | `lifecyclemodel validate-build` | none |
 | `lifecyclemodel publish-build` | none |
 | `lifecyclemodel orchestrate` | none |
-| `lifecyclemodel build-resulting-process` | none for local-only runs; `TIANGONG_LCA_API_BASE_URL` and `TIANGONG_LCA_API_KEY` when `process_sources.allow_remote_lookup=true` |
+| `lifecyclemodel build-resulting-process` | none for local-only runs; `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY`, and `TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` when `process_sources.allow_remote_lookup=true` |
 | `lifecyclemodel publish-resulting-process` | none |
 | `review process` | none for rule-only review; optional `TIANGONG_LCA_REVIEW_LLM_BASE_URL`, `TIANGONG_LCA_REVIEW_LLM_API_KEY`, and `TIANGONG_LCA_REVIEW_LLM_MODEL` when `--enable-llm` is set |
 | `review flow` | none for rule-only review; optional `TIANGONG_LCA_REVIEW_LLM_BASE_URL`, `TIANGONG_LCA_REVIEW_LLM_API_KEY`, and `TIANGONG_LCA_REVIEW_LLM_MODEL` when `--enable-llm` is set |
 | `review lifecyclemodel` | none |
-| `flow get` | `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY` |
-| `flow list` | `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY` |
+| `flow get` | `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY`, `TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
+| `flow list` | `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY`, `TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
 | `flow remediate` | none |
-| `flow publish-version` | `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY` |
-| `flow publish-reviewed-data` | none for local dry-run; `TIANGONG_LCA_API_BASE_URL` and `TIANGONG_LCA_API_KEY` when `--commit` publishes prepared flow/process rows |
+| `flow publish-version` | `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY`, `TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
+| `flow publish-reviewed-data` | none for local dry-run; `TIANGONG_LCA_API_BASE_URL`, `TIANGONG_LCA_API_KEY`, and `TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` when `--commit` publishes prepared flow/process rows |
 | `flow build-alias-map` | none |
 | `flow scan-process-flow-refs` | none |
 | `flow plan-process-flow-repairs` | none |

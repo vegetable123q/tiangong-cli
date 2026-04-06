@@ -6,8 +6,16 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { isDirectEntry, main, maybeRunFromProcess } from '../src/main.js';
+import { buildSupabaseTestEnv } from './helpers/supabase-auth.js';
 
 const integrationTest = process.env.TIANGONG_LCA_COVERAGE === '1' ? test.skip : test;
+
+function makeRuntimeEnv(overrides: Partial<NodeJS.ProcessEnv> = {}): NodeJS.ProcessEnv {
+  return buildSupabaseTestEnv({
+    TIANGONG_LCA_API_BASE_URL: 'https://example.com/functions/v1',
+    ...overrides,
+  });
+}
 
 test('main writes stdout and stderr from CLI results', async () => {
   const originalStdoutWrite = process.stdout.write.bind(process.stdout);
@@ -25,10 +33,7 @@ test('main writes stdout and stderr from CLI results', async () => {
   }) as typeof process.stderr.write;
 
   try {
-    const exitCode = await main(['process', 'auto-build'], {
-      TIANGONG_LCA_API_BASE_URL: 'https://example.com/functions/v1',
-      TIANGONG_LCA_API_KEY: 'secret-token',
-    });
+    const exitCode = await main(['process', 'auto-build'], makeRuntimeEnv());
 
     assert.equal(exitCode, 2);
     assert.equal(stdout, '');
@@ -56,10 +61,7 @@ test('main writes stdout for successful command results', async () => {
   }) as typeof process.stderr.write;
 
   try {
-    const exitCode = await main(['doctor', '--json'], {
-      TIANGONG_LCA_API_BASE_URL: 'https://example.com/functions/v1',
-      TIANGONG_LCA_API_KEY: 'secret-token',
-    });
+    const exitCode = await main(['doctor', '--json'], makeRuntimeEnv());
 
     assert.equal(exitCode, 0);
     assert.match(stdout, /"ok":true/u);
@@ -88,10 +90,7 @@ test('maybeRunFromProcess returns null when not running as the entry module', as
   const otherPath = path.resolve(path.join(path.sep, 'tmp', 'other.ts'));
   const exitCode = await maybeRunFromProcess(
     ['/usr/local/bin/node', otherPath, 'doctor', '--json'],
-    {
-      TIANGONG_LCA_API_BASE_URL: 'https://example.com/functions/v1',
-      TIANGONG_LCA_API_KEY: 'secret-token',
-    },
+    makeRuntimeEnv(),
     pathToFileURL(mainPath).href,
   );
 
@@ -118,10 +117,7 @@ test('maybeRunFromProcess executes the CLI when running as the entry module', as
   try {
     const exitCode = await maybeRunFromProcess(
       ['/usr/local/bin/node', mainPath, 'doctor', '--json'],
-      {
-        TIANGONG_LCA_API_BASE_URL: 'https://example.com/functions/v1',
-        TIANGONG_LCA_API_KEY: 'secret-token',
-      },
+      makeRuntimeEnv(),
       pathToFileURL(mainPath).href,
     );
 
@@ -140,12 +136,14 @@ integrationTest('bin entrypoint executes successfully in a child process', () =>
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-main-'));
   const repoRoot = path.resolve(process.cwd());
   const binPath = path.join(repoRoot, 'bin', 'tiangong.js');
+  const env = makeRuntimeEnv();
 
   writeFileSync(
     path.join(dir, '.env'),
     [
-      'TIANGONG_LCA_API_BASE_URL=https://example.com/functions/v1',
-      'TIANGONG_LCA_API_KEY=secret-token',
+      `TIANGONG_LCA_API_BASE_URL=${env.TIANGONG_LCA_API_BASE_URL ?? ''}`,
+      `TIANGONG_LCA_API_KEY=${env.TIANGONG_LCA_API_KEY ?? ''}`,
+      `TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY=${env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY ?? ''}`,
     ].join('\n'),
     'utf8',
   );
@@ -172,8 +170,7 @@ integrationTest('dist/main.js executes successfully when run directly in a child
     encoding: 'utf8',
     env: {
       ...process.env,
-      TIANGONG_LCA_API_BASE_URL: 'https://example.com/functions/v1',
-      TIANGONG_LCA_API_KEY: 'secret-token',
+      ...makeRuntimeEnv(),
     },
   });
 

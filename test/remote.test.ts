@@ -4,6 +4,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { executeRemoteCommand, getRemoteCommandHelp } from '../src/lib/remote.js';
+import {
+  buildSupabaseTestEnv,
+  isSupabaseAuthTokenUrl,
+  makeSupabaseAuthResponse,
+} from './helpers/supabase-auth.js';
 
 function makeInputFile(content: string): { dir: string; filePath: string } {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-remote-'));
@@ -22,9 +27,10 @@ test('executeRemoteCommand supports dry run and masks authorization', async () =
     const output = await executeRemoteCommand({
       commandKey: 'search:flow',
       inputPath: filePath,
-      apiBaseUrl: 'https://example.com/functions/v1/',
-      apiKey: 'secret-token',
-      region: 'us-east-1',
+      env: buildSupabaseTestEnv({
+        TIANGONG_LCA_API_BASE_URL: 'https://example.com/functions/v1/',
+        TIANGONG_LCA_REGION: 'us-east-1',
+      }),
       timeoutMs: 50,
       dryRun: true,
       compactJson: false,
@@ -48,13 +54,18 @@ test('executeRemoteCommand posts JSON and omits region for embedding command', a
     const output = await executeRemoteCommand({
       commandKey: 'admin:embedding-run',
       inputPath: filePath,
-      apiBaseUrl: 'https://example.com/functions/v1',
-      apiKey: 'secret-token',
-      region: 'us-east-1',
+      env: buildSupabaseTestEnv({
+        TIANGONG_LCA_API_BASE_URL: 'https://example.com/functions/v1',
+        TIANGONG_LCA_REGION: 'us-east-1',
+      }),
       timeoutMs: 50,
       dryRun: false,
       compactJson: true,
       fetchImpl: async (input, init) => {
+        if (isSupabaseAuthTokenUrl(String(input))) {
+          return makeSupabaseAuthResponse();
+        }
+
         observedUrl = input;
         observedHeaders = { ...(init?.headers as Record<string, string> | undefined) };
         return {
@@ -70,7 +81,7 @@ test('executeRemoteCommand posts JSON and omits region for embedding command', a
 
     assert.equal(output, '{"completedJobs":1}\n');
     assert.equal(observedUrl, 'https://example.com/functions/v1/embedding_ft');
-    assert.equal(observedHeaders.Authorization, 'Bearer secret-token');
+    assert.equal(observedHeaders.Authorization, 'Bearer access-token');
     assert.equal(observedHeaders['x-region'], undefined);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -85,9 +96,10 @@ test('executeRemoteCommand validates required API config and unsupported command
         executeRemoteCommand({
           commandKey: 'search:flow',
           inputPath: filePath,
-          apiBaseUrl: null,
-          apiKey: 'secret-token',
-          region: 'us-east-1',
+          env: buildSupabaseTestEnv({
+            TIANGONG_LCA_API_BASE_URL: '',
+            TIANGONG_LCA_REGION: 'us-east-1',
+          }),
           timeoutMs: 50,
           dryRun: false,
           compactJson: false,
@@ -95,7 +107,7 @@ test('executeRemoteCommand validates required API config and unsupported command
             throw new Error('unreachable');
           },
         }),
-      /Missing API base URL/u,
+      /Missing Supabase REST runtime env: TIANGONG_LCA_API_BASE_URL/u,
     );
 
     await assert.rejects(
@@ -103,9 +115,11 @@ test('executeRemoteCommand validates required API config and unsupported command
         executeRemoteCommand({
           commandKey: 'search:flow',
           inputPath: filePath,
-          apiBaseUrl: 'https://example.com',
-          apiKey: null,
-          region: 'us-east-1',
+          env: buildSupabaseTestEnv({
+            TIANGONG_LCA_API_BASE_URL: 'https://example.com',
+            TIANGONG_LCA_API_KEY: '',
+            TIANGONG_LCA_REGION: 'us-east-1',
+          }),
           timeoutMs: 50,
           dryRun: false,
           compactJson: false,
@@ -113,7 +127,7 @@ test('executeRemoteCommand validates required API config and unsupported command
             throw new Error('unreachable');
           },
         }),
-      /Missing API key/u,
+      /Missing Supabase REST runtime env: TIANGONG_LCA_API_KEY/u,
     );
 
     await assert.rejects(
@@ -121,9 +135,10 @@ test('executeRemoteCommand validates required API config and unsupported command
         executeRemoteCommand({
           commandKey: 'search:unknown' as never,
           inputPath: filePath,
-          apiBaseUrl: 'https://example.com',
-          apiKey: 'secret-token',
-          region: 'us-east-1',
+          env: buildSupabaseTestEnv({
+            TIANGONG_LCA_API_BASE_URL: 'https://example.com',
+            TIANGONG_LCA_REGION: 'us-east-1',
+          }),
           timeoutMs: 50,
           dryRun: false,
           compactJson: false,

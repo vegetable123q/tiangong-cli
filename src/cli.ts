@@ -294,6 +294,16 @@ Options:
   --region <name>  Override TIANGONG_LCA_REGION
   --timeout-ms <n> Request timeout in milliseconds
   -h, --help
+
+Required env:
+  TIANGONG_LCA_API_BASE_URL
+  TIANGONG_LCA_API_KEY
+  TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY
+  TIANGONG_LCA_REGION (optional)
+
+Runtime note:
+  The CLI decodes TIANGONG_LCA_API_KEY as a user API key bootstrap, exchanges it for a user session,
+  and sends the resolved access token to Edge Functions.
 `.trim();
 }
 
@@ -309,6 +319,15 @@ Options:
   --base-url <url> Override TIANGONG_LCA_API_BASE_URL
   --timeout-ms <n> Request timeout in milliseconds
   -h, --help
+
+Required env:
+  TIANGONG_LCA_API_BASE_URL
+  TIANGONG_LCA_API_KEY
+  TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY
+
+Runtime note:
+  The CLI decodes TIANGONG_LCA_API_KEY as a user API key bootstrap, exchanges it for a user session,
+  and sends the resolved access token to Edge Functions.
 `.trim();
 }
 
@@ -387,9 +406,11 @@ Options:
 Required env:
   TIANGONG_LCA_API_BASE_URL
   TIANGONG_LCA_API_KEY
+  TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY
 
 Runtime note:
-  The CLI derives a native @supabase/supabase-js client and deterministic read target from TIANGONG_LCA_API_BASE_URL.
+  The CLI derives a native @supabase/supabase-js client and deterministic read target from TIANGONG_LCA_API_BASE_URL,
+  and authenticates that client with the resolved user access token.
 `.trim();
 }
 
@@ -414,9 +435,11 @@ Options:
 Required env:
   TIANGONG_LCA_API_BASE_URL
   TIANGONG_LCA_API_KEY
+  TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY
 
 Runtime note:
-  The CLI derives a native @supabase/supabase-js client and deterministic read target from TIANGONG_LCA_API_BASE_URL.
+  The CLI derives a native @supabase/supabase-js client and deterministic read target from TIANGONG_LCA_API_BASE_URL,
+  and authenticates that client with the resolved user access token.
 `.trim();
 }
 
@@ -458,6 +481,7 @@ Options:
 Environment:
   TIANGONG_LCA_API_BASE_URL
   TIANGONG_LCA_API_KEY
+  TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY
 
 Outputs written under --out-dir:
   - flows_tidas_sdk_plus_classification_mcp_success_list.json
@@ -486,7 +510,8 @@ Options:
 
 Environment:
   none for local dry-run
-  TIANGONG_LCA_API_BASE_URL and TIANGONG_LCA_API_KEY when --commit publishes prepared rows
+  TIANGONG_LCA_API_BASE_URL, TIANGONG_LCA_API_KEY, and TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY
+  when --commit publishes prepared rows
 
 Outputs written under --out-dir:
   - prepared-flow-rows.json
@@ -730,6 +755,7 @@ Options:
 Remote lookup env (only when process_sources.allow_remote_lookup=true):
   TIANGONG_LCA_API_BASE_URL
   TIANGONG_LCA_API_KEY
+  TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY
 `.trim();
 }
 
@@ -876,9 +902,11 @@ Options:
 Required env:
   TIANGONG_LCA_API_BASE_URL
   TIANGONG_LCA_API_KEY
+  TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY
 
 Runtime note:
-  The CLI derives a native @supabase/supabase-js client and deterministic read target from TIANGONG_LCA_API_BASE_URL.
+  The CLI derives a native @supabase/supabase-js client and deterministic read target from TIANGONG_LCA_API_BASE_URL,
+  and authenticates that client with the resolved user access token.
 `.trim();
 }
 
@@ -2610,17 +2638,18 @@ function plannedCommand(command: string, subcommand?: string): CliResult {
   };
 }
 
-function resolveRemoteRuntime(
+function applyRemoteOverrides(
   env: NodeJS.ProcessEnv,
   overrides: Pick<ReturnType<typeof parseRemoteFlags>, 'apiBaseUrl' | 'apiKey' | 'region'>,
 ) {
   const runtimeEnv = readRuntimeEnv(env);
 
   return {
-    apiBaseUrl: overrides.apiBaseUrl ?? runtimeEnv.apiBaseUrl,
-    apiKey: overrides.apiKey ?? runtimeEnv.apiKey,
-    region: overrides.region ?? runtimeEnv.region,
-  };
+    ...env,
+    TIANGONG_LCA_API_BASE_URL: overrides.apiBaseUrl ?? runtimeEnv.apiBaseUrl ?? undefined,
+    TIANGONG_LCA_API_KEY: overrides.apiKey ?? runtimeEnv.apiKey ?? undefined,
+    TIANGONG_LCA_REGION: overrides.region ?? runtimeEnv.region,
+  } satisfies NodeJS.ProcessEnv;
 }
 
 export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResult> {
@@ -2695,16 +2724,14 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
       if (remoteFlags.help) {
         return { exitCode: 0, stdout: `${getRemoteCommandHelp(commandKey)}\n`, stderr: '' };
       }
-      const runtime = resolveRemoteRuntime(deps.env, remoteFlags);
+      const env = applyRemoteOverrides(deps.env, remoteFlags);
 
       return {
         exitCode: 0,
         stdout: await executeRemoteCommand({
           commandKey,
           inputPath: remoteFlags.inputPath,
-          apiBaseUrl: runtime.apiBaseUrl,
-          apiKey: runtime.apiKey,
-          region: runtime.region,
+          env,
           timeoutMs: remoteFlags.timeoutMs,
           dryRun: remoteFlags.dryRun,
           compactJson: remoteFlags.json,
@@ -3271,16 +3298,14 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
           stderr: '',
         };
       }
-      const runtime = resolveRemoteRuntime(deps.env, remoteFlags);
+      const env = applyRemoteOverrides(deps.env, remoteFlags);
 
       return {
         exitCode: 0,
         stdout: await executeRemoteCommand({
           commandKey: 'admin:embedding-run',
           inputPath: remoteFlags.inputPath,
-          apiBaseUrl: runtime.apiBaseUrl,
-          apiKey: runtime.apiKey,
-          region: runtime.region,
+          env,
           timeoutMs: remoteFlags.timeoutMs,
           dryRun: remoteFlags.dryRun,
           compactJson: remoteFlags.json,

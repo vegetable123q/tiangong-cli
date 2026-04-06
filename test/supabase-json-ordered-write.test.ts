@@ -8,6 +8,11 @@ import {
   hasSupabaseRestRuntime,
   syncSupabaseJsonOrderedRecord,
 } from '../src/lib/supabase-json-ordered-write.js';
+import {
+  buildSupabaseTestEnv,
+  isSupabaseAuthTokenUrl,
+  makeSupabaseAuthResponse,
+} from './helpers/supabase-auth.js';
 
 function makeResponse(options: {
   ok: boolean;
@@ -31,6 +36,16 @@ function makeResponse(options: {
   };
 }
 
+function withSupabaseAuthBootstrap(fetchImpl: FetchLike): FetchLike {
+  return async (url, init) => {
+    if (isSupabaseAuthTokenUrl(String(url))) {
+      return makeSupabaseAuthResponse();
+    }
+
+    return fetchImpl(String(url), init);
+  };
+}
+
 test('hasSupabaseRestRuntime checks env completeness', () => {
   assert.equal(hasSupabaseRestRuntime(undefined), false);
   assert.equal(hasSupabaseRestRuntime({} as NodeJS.ProcessEnv), false);
@@ -38,6 +53,7 @@ test('hasSupabaseRestRuntime checks env completeness', () => {
     hasSupabaseRestRuntime({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
       TIANGONG_LCA_API_KEY: 'key',
+      TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY: 'sb-publishable-key',
     } as NodeJS.ProcessEnv),
     true,
   );
@@ -45,7 +61,7 @@ test('hasSupabaseRestRuntime checks env completeness', () => {
 
 test('supabase json_ordered write inserts when no exact row exists', async () => {
   const observed: Array<{ method: string; url: string; body?: string }> = [];
-  const fetchImpl: FetchLike = async (url, init) => {
+  const fetchImpl = withSupabaseAuthBootstrap(async (url, init) => {
     observed.push({
       method: String(init?.method ?? 'GET'),
       url: String(url),
@@ -65,7 +81,7 @@ test('supabase json_ordered write inserts when no exact row exists', async () =>
       status: 201,
       body: '[{"id":"proc-1"}]',
     });
-  };
+  });
 
   const result = await syncSupabaseJsonOrderedRecord({
     table: 'processes',
@@ -73,10 +89,10 @@ test('supabase json_ordered write inserts when no exact row exists', async () =>
     version: '01.00.001',
     payload: { processDataSet: {} },
     writeMode: 'upsert_current_version',
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
       TIANGONG_LCA_API_KEY: 'key',
-    } as NodeJS.ProcessEnv,
+    }),
     fetchImpl,
   });
 
@@ -97,7 +113,7 @@ test('supabase json_ordered write inserts when no exact row exists', async () =>
 
 test('supabase json_ordered write updates when exact row already exists', async () => {
   const observed: Array<{ method: string; url: string }> = [];
-  const fetchImpl: FetchLike = async (url, init) => {
+  const fetchImpl = withSupabaseAuthBootstrap(async (url, init) => {
     observed.push({
       method: String(init?.method ?? 'GET'),
       url: String(url),
@@ -116,7 +132,7 @@ test('supabase json_ordered write updates when exact row already exists', async 
       status: 200,
       body: '[{"id":"src-1"}]',
     });
-  };
+  });
 
   const result = await syncSupabaseJsonOrderedRecord({
     table: 'sources',
@@ -124,10 +140,10 @@ test('supabase json_ordered write updates when exact row already exists', async 
     version: '01.00.001',
     payload: { sourceDataSet: {} },
     writeMode: 'upsert_current_version',
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/rest/v1',
       TIANGONG_LCA_API_KEY: 'key',
-    } as NodeJS.ProcessEnv,
+    }),
     fetchImpl,
   });
 
@@ -141,7 +157,7 @@ test('supabase json_ordered write updates when exact row already exists', async 
 
 test('supabase json_ordered write falls back to update after insert conflict', async () => {
   const observed: Array<{ method: string; url: string }> = [];
-  const fetchImpl: FetchLike = async (url, init) => {
+  const fetchImpl = withSupabaseAuthBootstrap(async (url, init) => {
     observed.push({
       method: String(init?.method ?? 'GET'),
       url: String(url),
@@ -176,7 +192,7 @@ test('supabase json_ordered write falls back to update after insert conflict', a
       status: 200,
       body: '[{"id":"lm-1"}]',
     });
-  };
+  });
 
   const result = await syncSupabaseJsonOrderedRecord({
     table: 'lifecyclemodels',
@@ -184,10 +200,10 @@ test('supabase json_ordered write falls back to update after insert conflict', a
     version: '01.00.001',
     payload: { lifeCycleModelDataSet: {} },
     writeMode: 'upsert_current_version',
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/functions/v1',
       TIANGONG_LCA_API_KEY: 'key',
-    } as NodeJS.ProcessEnv,
+    }),
     fetchImpl,
   });
 
@@ -199,12 +215,13 @@ test('supabase json_ordered write falls back to update after insert conflict', a
 });
 
 test('append-only insert skips existing rows and validates helper branches', async () => {
-  const fetchImpl: FetchLike = async () =>
+  const fetchImpl = withSupabaseAuthBootstrap(async () =>
     makeResponse({
       ok: true,
       status: 200,
       body: '[{"id":"proc-skip","version":"01.00.001","state_code":0}]',
-    });
+    }),
+  );
 
   const result = await syncSupabaseJsonOrderedRecord({
     table: 'processes',
@@ -212,10 +229,10 @@ test('append-only insert skips existing rows and validates helper branches', asy
     version: '01.00.001',
     payload: { processDataSet: {} },
     writeMode: 'append_only_insert',
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
       TIANGONG_LCA_API_KEY: 'key',
-    } as NodeJS.ProcessEnv,
+    }),
     fetchImpl,
   });
 
@@ -252,7 +269,9 @@ test('supabase json_ordered helpers handle empty/text success payloads and inval
   const insertClient = createSupabaseDataClient(
     {
       apiBaseUrl: 'https://example.supabase.co',
-      apiKey: 'key',
+      publishableKey: 'sb-publishable-key',
+      getAccessToken: async () => 'access-token',
+      refreshAccessToken: async () => 'refreshed-access-token',
     },
     async () =>
       makeResponse({
@@ -274,7 +293,9 @@ test('supabase json_ordered helpers handle empty/text success payloads and inval
   const updateClient = createSupabaseDataClient(
     {
       apiBaseUrl: 'https://example.supabase.co',
-      apiKey: 'key',
+      publishableKey: 'sb-publishable-key',
+      getAccessToken: async () => 'access-token',
+      refreshAccessToken: async () => 'refreshed-access-token',
     },
     async () =>
       makeResponse({
@@ -312,11 +333,11 @@ test('supabase json_ordered write surfaces remote request failures and invalid J
         version: '01.00.001',
         payload: { processDataSet: {} },
         writeMode: 'upsert_current_version',
-        env: {
+        env: buildSupabaseTestEnv({
           TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
           TIANGONG_LCA_API_KEY: 'key',
-        } as NodeJS.ProcessEnv,
-        fetchImpl: async () => ({
+        }),
+        fetchImpl: withSupabaseAuthBootstrap(async () => ({
           ok: false,
           status: 503,
           headers: {
@@ -327,7 +348,7 @@ test('supabase json_ordered write surfaces remote request failures and invalid J
           async text() {
             return 'upstream unavailable';
           },
-        }),
+        })),
       }),
     (error) => {
       assert.ok(error instanceof CliError);
@@ -344,16 +365,17 @@ test('supabase json_ordered write surfaces remote request failures and invalid J
         version: '01.00.001',
         payload: { processDataSet: {} },
         writeMode: 'upsert_current_version',
-        env: {
+        env: buildSupabaseTestEnv({
           TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
           TIANGONG_LCA_API_KEY: 'key',
-        } as NodeJS.ProcessEnv,
-        fetchImpl: async () =>
+        }),
+        fetchImpl: withSupabaseAuthBootstrap(async () =>
           makeResponse({
             ok: true,
             status: 200,
             body: '{"broken"',
           }),
+        ),
       }),
     (error) => {
       assert.ok(error instanceof CliError);
@@ -373,11 +395,11 @@ test('supabase json_ordered write rethrows insert conflicts when the row is stil
         version: '01.00.001',
         payload: { processDataSet: {} },
         writeMode: 'upsert_current_version',
-        env: {
+        env: buildSupabaseTestEnv({
           TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
           TIANGONG_LCA_API_KEY: 'key',
-        } as NodeJS.ProcessEnv,
-        fetchImpl: async (_url, init) => {
+        }),
+        fetchImpl: withSupabaseAuthBootstrap(async (_url, init) => {
           observed.push(String(init?.method ?? 'GET'));
           if (observed.length === 2) {
             return makeResponse({
@@ -392,7 +414,7 @@ test('supabase json_ordered write rethrows insert conflicts when the row is stil
             status: 200,
             body: '[]',
           });
-        },
+        }),
       }),
     (error) => {
       assert.ok(error instanceof CliError);
@@ -412,11 +434,11 @@ test('append-only insert skips rows that appear after an insert conflict', async
     version: '01.00.001',
     payload: { processDataSet: {} },
     writeMode: 'append_only_insert',
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
       TIANGONG_LCA_API_KEY: 'key',
-    } as NodeJS.ProcessEnv,
-    fetchImpl: async (_url, init) => {
+    }),
+    fetchImpl: withSupabaseAuthBootstrap(async (_url, init) => {
       observed.push(String(init?.method ?? 'GET'));
       if (observed.length === 2) {
         return makeResponse({
@@ -439,7 +461,7 @@ test('append-only insert skips rows that appear after an insert conflict', async
         status: 200,
         body: '[]',
       });
-    },
+    }),
   });
 
   assert.deepEqual(result, {

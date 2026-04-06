@@ -7,6 +7,7 @@ import {
   fetchExactOrLatestProcessRow,
   normalizeSupabaseProcessPayload,
   requireSupabaseRestRuntime,
+  type SupabaseDataRuntime,
 } from '../src/lib/supabase-rest.js';
 
 function jsonFetch(
@@ -35,15 +36,29 @@ function jsonFetch(
   }) as FetchLike;
 }
 
+function makeRuntime(apiBaseUrl: string): SupabaseDataRuntime {
+  return {
+    apiBaseUrl,
+    publishableKey: 'sb-publishable-key',
+    getAccessToken: async () => 'access-token',
+    refreshAccessToken: async () => 'refreshed-access-token',
+  };
+}
+
 test('requireSupabaseRestRuntime reads the shared CLI env contract', () => {
   assert.deepEqual(
     requireSupabaseRestRuntime({
       TIANGONG_LCA_API_BASE_URL: ' https://example.supabase.co/functions/v1 ',
       TIANGONG_LCA_API_KEY: ' secret-token ',
+      TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY: ' sb-publishable-key ',
     } as NodeJS.ProcessEnv),
     {
       apiBaseUrl: 'https://example.supabase.co/functions/v1',
-      apiKey: 'secret-token',
+      userApiKey: 'secret-token',
+      publishableKey: 'sb-publishable-key',
+      sessionFile: null,
+      disableSessionCache: false,
+      forceReauth: false,
     },
   );
 });
@@ -55,7 +70,11 @@ test('requireSupabaseRestRuntime rejects missing env keys', () => {
       assert.ok(error instanceof CliError);
       assert.equal(error.code, 'SUPABASE_REST_ENV_REQUIRED');
       assert.deepEqual(error.details, {
-        missing: ['TIANGONG_LCA_API_BASE_URL', 'TIANGONG_LCA_API_KEY'],
+        missing: [
+          'TIANGONG_LCA_API_BASE_URL',
+          'TIANGONG_LCA_API_KEY',
+          'TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY',
+        ],
       });
       return true;
     },
@@ -112,10 +131,7 @@ test('normalizeSupabaseProcessPayload rejects invalid JSON and invalid shapes', 
 test('fetchExactOrLatestProcessRow returns the exact version row when present', async () => {
   const observed: Array<{ url: string; method: string; headers: HeadersInit | undefined }> = [];
   const lookup = await fetchExactOrLatestProcessRow({
-    runtime: {
-      apiBaseUrl: 'https://example.supabase.co/functions/v1',
-      apiKey: 'secret-token',
-    },
+    runtime: makeRuntime('https://example.supabase.co/functions/v1'),
     id: 'proc-1',
     version: '00.00.001',
     timeoutMs: 10,
@@ -153,17 +169,14 @@ test('fetchExactOrLatestProcessRow returns the exact version row when present', 
   assert.match(observed[0]?.url ?? '', /version=eq\.00\.00\.001/u);
   const headers = observed[0]?.headers as Record<string, string>;
   assert.equal(headers.accept, 'application/json');
-  assert.equal(headers.authorization, 'Bearer secret-token');
-  assert.equal(headers.apikey, 'secret-token');
+  assert.equal(headers.authorization, 'Bearer access-token');
+  assert.equal(headers.apikey, 'sb-publishable-key');
 });
 
 test('fetchExactOrLatestProcessRow returns the latest row when no version is requested', async () => {
   const observed: Array<{ url: string; method: string; headers: HeadersInit | undefined }> = [];
   const lookup = await fetchExactOrLatestProcessRow({
-    runtime: {
-      apiBaseUrl: 'https://example.supabase.co',
-      apiKey: 'secret-token',
-    },
+    runtime: makeRuntime('https://example.supabase.co'),
     id: 'proc-1',
     timeoutMs: 10,
     fetchImpl: jsonFetch(
@@ -191,10 +204,7 @@ test('fetchExactOrLatestProcessRow returns the latest row when no version is req
 
 test('fetchExactOrLatestProcessRow normalizes missing id and version fields to empty strings', async () => {
   const lookup = await fetchExactOrLatestProcessRow({
-    runtime: {
-      apiBaseUrl: 'https://example.supabase.co',
-      apiKey: 'secret-token',
-    },
+    runtime: makeRuntime('https://example.supabase.co'),
     id: 'proc-1',
     timeoutMs: 10,
     fetchImpl: jsonFetch(
@@ -223,10 +233,7 @@ test('fetchExactOrLatestProcessRow normalizes missing id and version fields to e
 test('fetchExactOrLatestProcessRow falls back to the latest version row when exact lookup misses', async () => {
   const observed: Array<{ url: string; method: string; headers: HeadersInit | undefined }> = [];
   const lookup = await fetchExactOrLatestProcessRow({
-    runtime: {
-      apiBaseUrl: 'https://example.supabase.co/rest/v1',
-      apiKey: 'secret-token',
-    },
+    runtime: makeRuntime('https://example.supabase.co/rest/v1'),
     id: 'proc-1',
     version: '00.00.001',
     timeoutMs: 10,
@@ -258,10 +265,7 @@ test('fetchExactOrLatestProcessRow falls back to the latest version row when exa
 
 test('fetchExactOrLatestProcessRow returns null when exact lookup misses without fallback', async () => {
   const lookup = await fetchExactOrLatestProcessRow({
-    runtime: {
-      apiBaseUrl: 'https://example.supabase.co',
-      apiKey: 'secret-token',
-    },
+    runtime: makeRuntime('https://example.supabase.co'),
     id: 'missing',
     version: '00.00.001',
     timeoutMs: 10,
@@ -274,10 +278,7 @@ test('fetchExactOrLatestProcessRow returns null when exact lookup misses without
 
 test('fetchExactOrLatestProcessRow returns null when neither exact nor latest rows exist', async () => {
   const lookup = await fetchExactOrLatestProcessRow({
-    runtime: {
-      apiBaseUrl: 'https://example.supabase.co',
-      apiKey: 'secret-token',
-    },
+    runtime: makeRuntime('https://example.supabase.co'),
     id: 'missing',
     version: '00.00.001',
     timeoutMs: 10,
@@ -292,10 +293,7 @@ test('fetchExactOrLatestProcessRow rejects malformed Supabase REST payloads', as
   await assert.rejects(
     () =>
       fetchExactOrLatestProcessRow({
-        runtime: {
-          apiBaseUrl: 'https://example.supabase.co',
-          apiKey: 'secret-token',
-        },
+        runtime: makeRuntime('https://example.supabase.co'),
         id: 'proc-1',
         version: '00.00.001',
         timeoutMs: 10,
@@ -307,10 +305,7 @@ test('fetchExactOrLatestProcessRow rejects malformed Supabase REST payloads', as
   await assert.rejects(
     () =>
       fetchExactOrLatestProcessRow({
-        runtime: {
-          apiBaseUrl: 'https://example.supabase.co',
-          apiKey: 'secret-token',
-        },
+        runtime: makeRuntime('https://example.supabase.co'),
         id: 'proc-1',
         version: '00.00.001',
         timeoutMs: 10,

@@ -16,6 +16,10 @@ export const ENV_KEYS = {
   apiBaseUrl: 'TIANGONG_LCA_API_BASE_URL',
   apiKey: 'TIANGONG_LCA_API_KEY',
   region: 'TIANGONG_LCA_REGION',
+  supabasePublishableKey: 'TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY',
+  sessionFile: 'TIANGONG_LCA_SESSION_FILE',
+  disableSessionCache: 'TIANGONG_LCA_DISABLE_SESSION_CACHE',
+  forceReauth: 'TIANGONG_LCA_FORCE_REAUTH',
 } as const;
 
 export const ENV_SPECS: EnvSpec[] = [
@@ -34,6 +38,28 @@ export const ENV_SPECS: EnvSpec[] = [
     required: false,
     description: 'Target TianGong LCA API region',
     defaultValue: 'us-east-1',
+  },
+  {
+    key: ENV_KEYS.supabasePublishableKey,
+    required: true,
+    description: 'Supabase publishable key used to bootstrap and refresh user sessions',
+  },
+  {
+    key: ENV_KEYS.sessionFile,
+    required: false,
+    description: 'Optional local path for the CLI session cache file',
+  },
+  {
+    key: ENV_KEYS.disableSessionCache,
+    required: false,
+    description: 'Disable the persistent CLI session cache when set to true',
+    defaultValue: 'false',
+  },
+  {
+    key: ENV_KEYS.forceReauth,
+    required: false,
+    description: 'Ignore cached sessions and force a fresh login when set to true',
+    defaultValue: 'false',
   },
 ];
 
@@ -58,7 +84,27 @@ export type RuntimeEnv = {
   apiBaseUrl: string | null;
   apiKey: string | null;
   region: string;
+  supabasePublishableKey: string | null;
+  sessionFile: string | null;
+  disableSessionCache: boolean;
+  forceReauth: boolean;
 };
+
+function parseBooleanEnv(value: string | null): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  switch (value.trim().toLowerCase()) {
+    case '1':
+    case 'true':
+    case 'yes':
+    case 'on':
+      return true;
+    default:
+      return false;
+  }
+}
 
 export function resolveEnv(spec: EnvSpec, env: NodeJS.ProcessEnv): ResolvedEnv {
   const envValue = env[spec.key];
@@ -92,11 +138,19 @@ export function readRuntimeEnv(env: NodeJS.ProcessEnv): RuntimeEnv {
   const apiBaseUrl = resolveEnv(ENV_SPECS[0], env).value;
   const apiKey = resolveEnv(ENV_SPECS[1], env).value;
   const region = resolveEnv(ENV_SPECS[2], env).value as string;
+  const supabasePublishableKey = resolveEnv(ENV_SPECS[3], env).value;
+  const sessionFile = resolveEnv(ENV_SPECS[4], env).value;
+  const disableSessionCache = parseBooleanEnv(resolveEnv(ENV_SPECS[5], env).value);
+  const forceReauth = parseBooleanEnv(resolveEnv(ENV_SPECS[6], env).value);
 
   return {
     apiBaseUrl,
     apiKey,
     region,
+    supabasePublishableKey,
+    sessionFile,
+    disableSessionCache,
+    forceReauth,
   };
 }
 
@@ -134,3 +188,7 @@ export function buildDoctorReport(
     checks,
   };
 }
+
+export const __testInternals = {
+  parseBooleanEnv,
+};

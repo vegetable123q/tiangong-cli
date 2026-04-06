@@ -6,6 +6,7 @@ import {
   runSupabaseArrayQuery,
   runSupabaseMutation,
 } from './supabase-client.js';
+import { createSupabaseDataRuntime } from './supabase-session.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -168,7 +169,11 @@ export function hasSupabaseRestRuntime(env: NodeJS.ProcessEnv | undefined): bool
     return false;
   }
 
-  return Boolean(trimToken(env.TIANGONG_LCA_API_BASE_URL) && trimToken(env.TIANGONG_LCA_API_KEY));
+  return Boolean(
+    trimToken(env.TIANGONG_LCA_API_BASE_URL) &&
+    trimToken(env.TIANGONG_LCA_API_KEY) &&
+    trimToken(env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY),
+  );
 }
 
 export async function syncSupabaseJsonOrderedRecord(options: {
@@ -188,12 +193,13 @@ export async function syncSupabaseJsonOrderedRecord(options: {
     'dataset version',
     'SUPABASE_JSON_ORDERED_VERSION_REQUIRED',
   );
-  const runtime = requireSupabaseRestRuntime(options.env);
-  const { client, restBaseUrl } = createSupabaseDataClient(
-    runtime,
-    options.fetchImpl,
-    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-  );
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const runtime = createSupabaseDataRuntime({
+    runtime: requireSupabaseRestRuntime(options.env),
+    fetchImpl: options.fetchImpl,
+    timeoutMs,
+  });
+  const { client, restBaseUrl } = createSupabaseDataClient(runtime, options.fetchImpl, timeoutMs);
 
   const visibleBefore = await exactVisibleRows({
     client,

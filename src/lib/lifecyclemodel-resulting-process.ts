@@ -12,6 +12,7 @@ import {
   normalizeSupabaseProcessPayload,
   requireSupabaseRestRuntime,
 } from './supabase-rest.js';
+import { createSupabaseDataRuntime } from './supabase-session.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -186,6 +187,13 @@ function requireRemoteProcessLookupRuntime(env: NodeJS.ProcessEnv) {
     missing.push('TIANGONG_LCA_API_KEY');
   }
 
+  if (
+    typeof env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY !== 'string' ||
+    !env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY.trim()
+  ) {
+    missing.push('TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY');
+  }
+
   if (missing.length > 0) {
     throw new CliError(
       `Remote process lookup requires ${missing.join(', ')} when process_sources.allow_remote_lookup=true.`,
@@ -203,7 +211,7 @@ function requireRemoteProcessLookupRuntime(env: NodeJS.ProcessEnv) {
 async function fetchRemoteProcessRecord(options: {
   processId: string;
   requestedVersion: string;
-  runtime: ReturnType<typeof requireSupabaseRestRuntime>;
+  runtime: ReturnType<typeof createSupabaseDataRuntime>;
   fetchImpl: FetchLike;
 }): Promise<{
   record: ProcessRecord;
@@ -1010,7 +1018,11 @@ async function resolveProcessRecords(
   if (unresolved.length > 0 && request.process_sources.allow_remote_lookup) {
     const env = options.remoteLookup?.env ?? process.env;
     const fetchImpl = options.remoteLookup?.fetchImpl ?? (fetch as FetchLike);
-    const runtime = requireRemoteProcessLookupRuntime(env);
+    const runtime = createSupabaseDataRuntime({
+      runtime: requireRemoteProcessLookupRuntime(env),
+      fetchImpl,
+      timeoutMs: REMOTE_PROCESS_LOOKUP_TIMEOUT_MS,
+    });
 
     for (const item of unresolved) {
       const remoteRecord = await fetchRemoteProcessRecord({

@@ -5,7 +5,7 @@ import {
   deriveSupabaseRestBaseUrl,
   requireSupabaseRestRuntime,
   runSupabaseArrayQuery,
-  type SupabaseRestRuntime,
+  type SupabaseDataRuntime,
 } from './supabase-client.js';
 
 type JsonObject = Record<string, unknown>;
@@ -118,7 +118,7 @@ function normalizeSupabaseProcessPayload(payload: unknown, lookupKey: string): J
 }
 
 async function fetchExactOrLatestProcessRow(options: {
-  runtime: SupabaseRestRuntime;
+  runtime: SupabaseDataRuntime;
   id: string;
   version?: string | null;
   timeoutMs: number;
@@ -223,4 +223,4 @@ export {
   fetchExactOrLatestProcessRow,
 };
 
-export type { SupabaseRestRuntime };
+export type { SupabaseDataRuntime };

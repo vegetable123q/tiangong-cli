@@ -15,6 +15,11 @@ import type {
 import type { RunFlowRemediateOptions } from '../src/lib/flow-remediate.js';
 import type { RunFlowReviewOptions } from '../src/lib/review-flow.js';
 import type { RunLifecyclemodelReviewOptions } from '../src/lib/review-lifecyclemodel.js';
+import {
+  buildSupabaseTestEnv,
+  isSupabaseAuthTokenUrl,
+  makeSupabaseAuthResponse,
+} from './helpers/supabase-auth.js';
 
 const dotEnvStatus: DotEnvLoadResult = {
   loaded: false,
@@ -23,21 +28,26 @@ const dotEnvStatus: DotEnvLoadResult = {
 };
 
 const makeDeps = (overrides?: Partial<NodeJS.ProcessEnv>) => ({
-  env: {
+  env: buildSupabaseTestEnv({
     TIANGONG_LCA_API_BASE_URL: 'https://example.com/functions/v1',
-    TIANGONG_LCA_API_KEY: 'secret-token',
     TIANGONG_LCA_REGION: 'us-east-1',
     ...overrides,
-  } as NodeJS.ProcessEnv,
+  }),
   dotEnvStatus,
-  fetchImpl: (async () => ({
-    ok: true,
-    status: 200,
-    headers: {
-      get: () => 'application/json',
-    },
-    text: async () => JSON.stringify({ ok: true }),
-  })) as FetchLike,
+  fetchImpl: (async (input) => {
+    if (isSupabaseAuthTokenUrl(String(input))) {
+      return makeSupabaseAuthResponse();
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get: () => 'application/json',
+      },
+      text: async () => JSON.stringify({ ok: true }),
+    };
+  }) as FetchLike,
 });
 
 test('executeCli prints main help when no command is given', async () => {
@@ -1714,14 +1724,18 @@ test('executeCli surfaces missing search API configuration after exhausting all 
       ['search', 'flow', '--input', inputPath],
       makeDeps({
         TIANGONG_LCA_API_BASE_URL: undefined,
-        TIANGONG_LCA_API_KEY: undefined,
+        TIANGONG_LCA_API_KEY: '',
+        TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY: undefined,
         TIANGONG_LCA_REGION: undefined,
       }),
     );
 
     assert.equal(result.exitCode, 2);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /API_BASE_URL_REQUIRED/u);
+    assert.match(result.stderr, /SUPABASE_REST_ENV_REQUIRED/u);
+    assert.match(result.stderr, /TIANGONG_LCA_API_BASE_URL/u);
+    assert.match(result.stderr, /TIANGONG_LCA_API_KEY/u);
+    assert.match(result.stderr, /TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY/u);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1737,14 +1751,18 @@ test('executeCli surfaces missing admin API configuration after exhausting all f
       ['admin', 'embedding-run', '--input', inputPath],
       makeDeps({
         TIANGONG_LCA_API_BASE_URL: undefined,
-        TIANGONG_LCA_API_KEY: undefined,
+        TIANGONG_LCA_API_KEY: '',
+        TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY: undefined,
         TIANGONG_LCA_REGION: undefined,
       }),
     );
 
     assert.equal(result.exitCode, 2);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /API_BASE_URL_REQUIRED/u);
+    assert.match(result.stderr, /SUPABASE_REST_ENV_REQUIRED/u);
+    assert.match(result.stderr, /TIANGONG_LCA_API_BASE_URL/u);
+    assert.match(result.stderr, /TIANGONG_LCA_API_KEY/u);
+    assert.match(result.stderr, /TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY/u);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1781,7 +1799,11 @@ test('executeCli returns unexpected error payloads from remote execution failure
   try {
     const result = await executeCli(['search', 'flow', '--input', inputPath], {
       ...makeDeps(),
-      fetchImpl: (async () => {
+      fetchImpl: (async (input) => {
+        if (isSupabaseAuthTokenUrl(String(input))) {
+          return makeSupabaseAuthResponse();
+        }
+
         throw new Error('network down');
       }) as FetchLike,
     });
@@ -2781,7 +2803,11 @@ test('executeCli dispatches flow publish-reviewed-data to the implemented CLI mo
       observedOptions?.env?.TIANGONG_LCA_API_BASE_URL,
       'https://example.com/functions/v1',
     );
-    assert.equal(observedOptions?.env?.TIANGONG_LCA_API_KEY, 'secret-token');
+    assert.equal(observedOptions?.env?.TIANGONG_LCA_API_KEY, makeDeps().env.TIANGONG_LCA_API_KEY);
+    assert.equal(
+      observedOptions?.env?.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY,
+      makeDeps().env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY,
+    );
     assert.equal(typeof observedOptions?.fetchImpl, 'function');
   } finally {
     rmSync(dir, { recursive: true, force: true });

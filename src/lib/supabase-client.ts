@@ -4,24 +4,59 @@ import type { FetchLike, ResponseLike } from './http.js';
 
 export type SupabaseRestRuntime = {
   apiBaseUrl: string;
-  apiKey: string;
+  userApiKey: string;
+  publishableKey: string;
+  sessionFile: string | null;
+  disableSessionCache: boolean;
+  forceReauth: boolean;
+};
+
+export type SupabaseDataRuntime = {
+  apiBaseUrl: string;
+  publishableKey: string;
+  getAccessToken: () => Promise<string>;
+  refreshAccessToken?: () => Promise<string>;
 };
 
 function trimToken(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function parseBooleanEnv(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  switch (value.trim().toLowerCase()) {
+    case '1':
+    case 'true':
+    case 'yes':
+    case 'on':
+      return true;
+    default:
+      return false;
+  }
+}
+
 export function requireSupabaseRestRuntime(env: NodeJS.ProcessEnv): SupabaseRestRuntime {
   const apiBaseUrl = trimToken(env.TIANGONG_LCA_API_BASE_URL);
-  const apiKey = trimToken(env.TIANGONG_LCA_API_KEY);
+  const userApiKey = trimToken(env.TIANGONG_LCA_API_KEY);
+  const publishableKey = trimToken(env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY);
+  const sessionFile = trimToken(env.TIANGONG_LCA_SESSION_FILE) || null;
+  const disableSessionCache = parseBooleanEnv(env.TIANGONG_LCA_DISABLE_SESSION_CACHE);
+  const forceReauth = parseBooleanEnv(env.TIANGONG_LCA_FORCE_REAUTH);
   const missing: string[] = [];
 
   if (!apiBaseUrl) {
     missing.push('TIANGONG_LCA_API_BASE_URL');
   }
 
-  if (!apiKey) {
+  if (!userApiKey) {
     missing.push('TIANGONG_LCA_API_KEY');
+  }
+
+  if (!publishableKey) {
+    missing.push('TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY');
   }
 
   if (missing.length > 0) {
@@ -34,7 +69,11 @@ export function requireSupabaseRestRuntime(env: NodeJS.ProcessEnv): SupabaseRest
 
   return {
     apiBaseUrl,
-    apiKey,
+    userApiKey,
+    publishableKey,
+    sessionFile,
+    disableSessionCache,
+    forceReauth,
   };
 }
 
@@ -83,11 +122,14 @@ function mergeSignals(signal: AbortSignal | null | undefined, timeoutMs: number)
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 }
 
-export function buildSupabaseAuthHeaders(apiKey: string): Record<string, string> {
+export function buildSupabaseAuthHeaders(
+  publishableKey: string,
+  accessToken: string,
+): Record<string, string> {
   return {
     Accept: 'application/json',
-    Authorization: `Bearer ${apiKey}`,
-    apikey: apiKey,
+    Authorization: `Bearer ${accessToken}`,
+    apikey: publishableKey,
   };
 }
 
@@ -123,19 +165,80 @@ async function toResponse(
   });
 }
 
-export function createSupabaseFetch(fetchImpl: FetchLike, timeoutMs: number): typeof fetch {
-  return async (input, init) => {
-    const url =
-      typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+function buildResolvedHeaders(
+  initHeaders: HeadersInit | undefined,
+  publishableKey: string,
+  accessToken: string,
+): Headers {
+  const headers = new Headers(initHeaders);
+  const authHeaders = buildSupabaseAuthHeaders(publishableKey, accessToken);
 
-    let responseLike: ResponseLike;
-    try {
-      responseLike = await fetchImpl(url, {
+  Object.entries(authHeaders).forEach(([headerName, value]) => {
+    headers.set(headerName, value);
+  });
+
+  return headers;
+}
+
+async function performFetch(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  fetchImpl: FetchLike,
+  timeoutMs: number,
+): Promise<ResponseLike> {
+  const url =
+    typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+  try {
+    return await fetchImpl(url, {
+      ...init,
+      signal: mergeSignals(init?.signal, timeoutMs),
+    });
+  } catch (error) {
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+export function createSupabaseFetch(
+  fetchImpl: FetchLike,
+  timeoutMs: number,
+  runtime?: SupabaseDataRuntime,
+): typeof fetch {
+  return async (input, init) => {
+    if (!runtime) {
+      const responseLike = await performFetch(input, init, fetchImpl, timeoutMs);
+      return toResponse(responseLike, init?.method);
+    }
+
+    const accessToken = await runtime.getAccessToken();
+    let responseLike = await performFetch(
+      input,
+      {
         ...init,
-        signal: mergeSignals(init?.signal, timeoutMs),
-      });
-    } catch (error) {
-      throw error instanceof Error ? error : new Error(String(error));
+        headers: buildResolvedHeaders(init?.headers, runtime.publishableKey, accessToken),
+      },
+      fetchImpl,
+      timeoutMs,
+    );
+
+    if (
+      [401, 403].includes(responseLike.status) &&
+      typeof runtime.refreshAccessToken === 'function'
+    ) {
+      const refreshedAccessToken = await runtime.refreshAccessToken();
+      responseLike = await performFetch(
+        input,
+        {
+          ...init,
+          headers: buildResolvedHeaders(
+            init?.headers,
+            runtime.publishableKey,
+            refreshedAccessToken,
+          ),
+        },
+        fetchImpl,
+        timeoutMs,
+      );
     }
 
     return toResponse(responseLike, init?.method);
@@ -267,22 +370,26 @@ export async function runSupabaseMutation(
 }
 
 export function createSupabaseDataClient(
-  runtime: SupabaseRestRuntime,
+  runtime: SupabaseDataRuntime,
   fetchImpl: FetchLike,
   timeoutMs: number,
 ) {
   return {
-    client: createClient(deriveSupabaseProjectBaseUrl(runtime.apiBaseUrl), runtime.apiKey, {
+    client: createClient(deriveSupabaseProjectBaseUrl(runtime.apiBaseUrl), runtime.publishableKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
         detectSessionInUrl: false,
       },
       global: {
-        headers: buildSupabaseAuthHeaders(runtime.apiKey),
-        fetch: createSupabaseFetch(fetchImpl, timeoutMs),
+        fetch: createSupabaseFetch(fetchImpl, timeoutMs, runtime),
       },
     }),
     restBaseUrl: deriveSupabaseRestBaseUrl(runtime.apiBaseUrl),
   };
 }
+
+export const __testInternals = {
+  parseBooleanEnv,
+  trimToken,
+};

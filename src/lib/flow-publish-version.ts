@@ -16,6 +16,7 @@ import {
   runSupabaseArrayQuery,
   runSupabaseMutation,
 } from './supabase-client.js';
+import { createSupabaseDataRuntime } from './supabase-session.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_WORKERS = 4;
@@ -686,9 +687,15 @@ export async function runFlowPublishVersion(
     '--limit',
     'FLOW_PUBLISH_VERSION_LIMIT_INVALID',
   );
-  const runtime = requireSupabaseRestRuntime(options.env ?? process.env);
   const fetchImpl = options.fetchImpl ?? (fetch as FetchLike);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const now = options.now ?? new Date();
+  const runtime = createSupabaseDataRuntime({
+    runtime: requireSupabaseRestRuntime(options.env ?? process.env),
+    fetchImpl,
+    timeoutMs,
+    now,
+  });
   const { client, restBaseUrl } = createSupabaseDataClient(runtime, fetchImpl, timeoutMs);
   const targetUserIdOverride = normalize_token(options.targetUserId ?? null);
   const files = build_output_files(outDir);

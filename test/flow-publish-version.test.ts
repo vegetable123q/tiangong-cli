@@ -6,6 +6,11 @@ import path from 'node:path';
 import { CliError } from '../src/lib/errors.js';
 import type { FetchLike } from '../src/lib/http.js';
 import { __testInternals, runFlowPublishVersion } from '../src/lib/flow-publish-version.js';
+import {
+  buildSupabaseTestEnv,
+  isSupabaseAuthTokenUrl,
+  makeSupabaseAuthResponse,
+} from './helpers/supabase-auth.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -81,6 +86,10 @@ function makeFetchQueue(
 ): FetchLike {
   let index = 0;
   return (async (input, init) => {
+    if (isSupabaseAuthTokenUrl(String(input))) {
+      return makeSupabaseAuthResponse();
+    }
+
     observed.push({
       url: String(input),
       method: String(init?.method ?? ''),
@@ -129,10 +138,10 @@ test('runFlowPublishVersion writes dry-run artifacts for insert, update, and fai
     const report = await runFlowPublishVersion({
       inputFile,
       outDir,
-      env: {
+      env: buildSupabaseTestEnv({
         TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/functions/v1',
         TIANGONG_LCA_API_KEY: 'secret-token',
-      } as NodeJS.ProcessEnv,
+      }),
       fetchImpl: makeFetchQueue(
         [
           { body: [] },
@@ -238,10 +247,10 @@ test('runFlowPublishVersion commit executes update, insert, fallback update, and
       outDir,
       commit: true,
       maxWorkers: 1,
-      env: {
+      env: buildSupabaseTestEnv({
         TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/rest/v1',
         TIANGONG_LCA_API_KEY: 'secret-token',
-      } as NodeJS.ProcessEnv,
+      }),
       fetchImpl: makeFetchQueue(
         [
           {
@@ -380,22 +389,34 @@ test('runFlowPublishVersion can fall back to process.env and global fetch and re
   const originalFetch = globalThis.fetch;
   const originalBaseUrl = process.env.TIANGONG_LCA_API_BASE_URL;
   const originalApiKey = process.env.TIANGONG_LCA_API_KEY;
+  const originalPublishableKey = process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+  const testEnv = buildSupabaseTestEnv({
+    TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/functions/v1',
+    TIANGONG_LCA_API_KEY: 'secret-token',
+  });
 
   writeJsonl(inputFile, [
     makeFlowRow({ id: 'flow-1', userId: 'user-1' }),
     makeFlowRow({ id: 'flow-2', userId: 'user-2' }),
   ]);
 
-  process.env.TIANGONG_LCA_API_BASE_URL = 'https://example.supabase.co/functions/v1';
-  process.env.TIANGONG_LCA_API_KEY = 'secret-token';
-  globalThis.fetch = (async () => ({
-    ok: true,
-    status: 200,
-    headers: {
-      get: () => 'application/json',
-    },
-    text: async () => '[]',
-  })) as unknown as typeof fetch;
+  process.env.TIANGONG_LCA_API_BASE_URL = testEnv.TIANGONG_LCA_API_BASE_URL;
+  process.env.TIANGONG_LCA_API_KEY = testEnv.TIANGONG_LCA_API_KEY;
+  process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY = testEnv.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    if (isSupabaseAuthTokenUrl(String(input))) {
+      return makeSupabaseAuthResponse();
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get: () => 'application/json',
+      },
+      text: async () => '[]',
+    };
+  }) as unknown as typeof fetch;
 
   try {
     const report = await runFlowPublishVersion({
@@ -419,6 +440,11 @@ test('runFlowPublishVersion can fall back to process.env and global fetch and re
     } else {
       process.env.TIANGONG_LCA_API_KEY = originalApiKey;
     }
+    if (originalPublishableKey === undefined) {
+      delete process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+    } else {
+      process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY = originalPublishableKey;
+    }
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -434,10 +460,10 @@ test('runFlowPublishVersion rejects empty inputs', async () => {
         runFlowPublishVersion({
           inputFile,
           outDir: path.join(dir, 'publish-version'),
-          env: {
+          env: buildSupabaseTestEnv({
             TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
             TIANGONG_LCA_API_KEY: 'secret-token',
-          } as NodeJS.ProcessEnv,
+          }),
           fetchImpl: makeFetchQueue([], []),
         }),
       (error) => error instanceof CliError && error.code === 'FLOW_PUBLISH_VERSION_EMPTY_INPUT',
@@ -476,10 +502,10 @@ test('runFlowPublishVersion records rows with missing ids as failures without re
     const report = await runFlowPublishVersion({
       inputFile,
       outDir,
-      env: {
+      env: buildSupabaseTestEnv({
         TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/rest/v1',
         TIANGONG_LCA_API_KEY: 'secret-token',
-      } as NodeJS.ProcessEnv,
+      }),
       fetchImpl: makeFetchQueue([], observed),
       maxWorkers: 1,
     });
@@ -527,10 +553,10 @@ test('runFlowPublishVersion surfaces update-after-insert-error failures when fal
       outDir,
       commit: true,
       maxWorkers: 1,
-      env: {
+      env: buildSupabaseTestEnv({
         TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/rest/v1',
         TIANGONG_LCA_API_KEY: 'secret-token',
-      } as NodeJS.ProcessEnv,
+      }),
       fetchImpl: makeFetchQueue(
         [
           { body: [] },

@@ -14,6 +14,11 @@ import {
   runLifecyclemodelBuildResultingProcess,
   type LifecyclemodelResultingProcessRequest,
 } from '../src/lib/lifecyclemodel-resulting-process.js';
+import {
+  buildSupabaseTestEnv,
+  isSupabaseAuthTokenUrl,
+  makeSupabaseAuthResponse,
+} from './helpers/supabase-auth.js';
 
 type JsonRecord = Record<string, unknown>;
 type PublicationKey = 'publicationAndOwnership' | 'common:publicationAndOwnership';
@@ -48,6 +53,10 @@ function readJson<T>(filePath: string): T {
 function createJsonFetch(responses: unknown[], observedUrls: string[] = []): FetchLike {
   let index = 0;
   return (async (input) => {
+    if (isSupabaseAuthTokenUrl(String(input))) {
+      return makeSupabaseAuthResponse();
+    }
+
     observedUrls.push(String(input));
     const next = responses[Math.min(index, responses.length - 1)];
     index += 1;
@@ -1201,10 +1210,10 @@ test('runLifecyclemodelBuildResultingProcess resolves missing processes through 
   try {
     const report = await runLifecyclemodelBuildResultingProcess({
       inputPath: requestPath,
-      env: {
+      env: buildSupabaseTestEnv({
         TIANGONG_LCA_API_BASE_URL: 'https://supabase.example/functions/v1',
         TIANGONG_LCA_API_KEY: 'supabase-api-key',
-      } as NodeJS.ProcessEnv,
+      }),
       fetchImpl: createJsonFetch(
         [
           [
@@ -1280,10 +1289,10 @@ test('runLifecyclemodelBuildResultingProcess falls back to latest remote process
   try {
     const report = await runLifecyclemodelBuildResultingProcess({
       inputPath: requestPath,
-      env: {
+      env: buildSupabaseTestEnv({
         TIANGONG_LCA_API_BASE_URL: 'https://supabase.example/rest/v1',
         TIANGONG_LCA_API_KEY: 'supabase-api-key',
-      } as NodeJS.ProcessEnv,
+      }),
       fetchImpl: createJsonFetch(
         [
           [],
@@ -1336,6 +1345,11 @@ test('runLifecyclemodelBuildResultingProcess can use process.env and global fetc
   const originalFetch = globalThis.fetch;
   const originalBaseUrl = process.env.TIANGONG_LCA_API_BASE_URL;
   const originalApiKey = process.env.TIANGONG_LCA_API_KEY;
+  const originalPublishableKey = process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+  const testEnv = buildSupabaseTestEnv({
+    TIANGONG_LCA_API_BASE_URL: 'https://supabase.example/functions/v1',
+    TIANGONG_LCA_API_KEY: 'supabase-api-key',
+  });
 
   writeJson(
     modelPath,
@@ -1359,35 +1373,42 @@ test('runLifecyclemodelBuildResultingProcess can use process.env and global fetc
     },
   });
 
-  process.env.TIANGONG_LCA_API_BASE_URL = 'https://supabase.example/functions/v1';
-  process.env.TIANGONG_LCA_API_KEY = 'supabase-api-key';
-  globalThis.fetch = (async () => ({
-    ok: true,
-    status: 200,
-    headers: {
-      get: () => 'application/json',
-    },
-    text: async () =>
-      JSON.stringify([
-        {
-          id: 'proc-remote',
-          version: '',
-          json: createProcessPayload({
+  process.env.TIANGONG_LCA_API_BASE_URL = testEnv.TIANGONG_LCA_API_BASE_URL;
+  process.env.TIANGONG_LCA_API_KEY = testEnv.TIANGONG_LCA_API_KEY;
+  process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY = testEnv.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    if (isSupabaseAuthTokenUrl(String(input))) {
+      return makeSupabaseAuthResponse();
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get: () => 'application/json',
+      },
+      text: async () =>
+        JSON.stringify([
+          {
             id: 'proc-remote',
-            version: VERSION,
-            referenceInternalId: '1',
-            exchanges: createExchange({
-              internalId: '1',
-              flowId: 'flow-remote',
-              direction: 'Output',
-              meanAmount: 1,
+            version: '',
+            json: createProcessPayload({
+              id: 'proc-remote',
+              version: VERSION,
+              referenceInternalId: '1',
+              exchanges: createExchange({
+                internalId: '1',
+                flowId: 'flow-remote',
+                direction: 'Output',
+                meanAmount: 1,
+              }),
             }),
-          }),
-          modified_at: null,
-          state_code: null,
-        },
-      ]),
-  })) as unknown as typeof fetch;
+            modified_at: null,
+            state_code: null,
+          },
+        ]),
+    };
+  }) as unknown as typeof fetch;
 
   try {
     const report = await runLifecyclemodelBuildResultingProcess({
@@ -1415,6 +1436,11 @@ test('runLifecyclemodelBuildResultingProcess can use process.env and global fetc
       delete process.env.TIANGONG_LCA_API_KEY;
     } else {
       process.env.TIANGONG_LCA_API_KEY = originalApiKey;
+    }
+    if (originalPublishableKey === undefined) {
+      delete process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+    } else {
+      process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY = originalPublishableKey;
     }
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1452,10 +1478,10 @@ test('runLifecyclemodelBuildResultingProcess rejects invalid remote lookup runti
       () =>
         runLifecyclemodelBuildResultingProcess({
           inputPath: requestPath,
-          env: {
+          env: buildSupabaseTestEnv({
             TIANGONG_LCA_API_BASE_URL: 'https://supabase.example/custom/path',
             TIANGONG_LCA_API_KEY: 'supabase-api-key',
-          } as NodeJS.ProcessEnv,
+          }),
           fetchImpl: createJsonFetch([[]]),
         }),
       'SUPABASE_REST_BASE_URL_INVALID',
@@ -1465,10 +1491,10 @@ test('runLifecyclemodelBuildResultingProcess rejects invalid remote lookup runti
       () =>
         runLifecyclemodelBuildResultingProcess({
           inputPath: requestPath,
-          env: {
+          env: buildSupabaseTestEnv({
             TIANGONG_LCA_API_BASE_URL: 'https://supabase.example/functions/v1',
             TIANGONG_LCA_API_KEY: 'supabase-api-key',
-          } as NodeJS.ProcessEnv,
+          }),
           fetchImpl: createJsonFetch([[], []]),
         }),
       'LIFECYCLEMODEL_REMOTE_PROCESS_NOT_FOUND',
@@ -1508,10 +1534,10 @@ test('runLifecyclemodelBuildResultingProcess rejects malformed remote process lo
       () =>
         runLifecyclemodelBuildResultingProcess({
           inputPath: requestPath,
-          env: {
+          env: buildSupabaseTestEnv({
             TIANGONG_LCA_API_BASE_URL: 'https://supabase.example/functions/v1',
             TIANGONG_LCA_API_KEY: 'supabase-api-key',
-          } as NodeJS.ProcessEnv,
+          }),
           fetchImpl: createJsonFetch([{ bad: 'shape' }]),
         }),
       'LIFECYCLEMODEL_REMOTE_LOOKUP_RESPONSE_INVALID',
@@ -2463,9 +2489,15 @@ test('buildProjectionBundle can fall back to process.env and global fetch for re
   const originalFetch = globalThis.fetch;
   const originalBaseUrl = process.env.TIANGONG_LCA_API_BASE_URL;
   const originalApiKey = process.env.TIANGONG_LCA_API_KEY;
+  const originalPublishableKey = process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+  const testEnv = buildSupabaseTestEnv({
+    TIANGONG_LCA_API_BASE_URL: 'https://supabase.example/functions/v1',
+    TIANGONG_LCA_API_KEY: 'supabase-api-key',
+  });
 
-  process.env.TIANGONG_LCA_API_BASE_URL = 'https://supabase.example/functions/v1';
-  process.env.TIANGONG_LCA_API_KEY = 'supabase-api-key';
+  process.env.TIANGONG_LCA_API_BASE_URL = testEnv.TIANGONG_LCA_API_BASE_URL;
+  process.env.TIANGONG_LCA_API_KEY = testEnv.TIANGONG_LCA_API_KEY;
+  process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY = testEnv.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
   globalThis.fetch = createJsonFetch(
     [
       [
@@ -2563,6 +2595,11 @@ test('buildProjectionBundle can fall back to process.env and global fetch for re
       delete process.env.TIANGONG_LCA_API_KEY;
     } else {
       process.env.TIANGONG_LCA_API_KEY = originalApiKey;
+    }
+    if (originalPublishableKey === undefined) {
+      delete process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+    } else {
+      process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY = originalPublishableKey;
     }
   }
 });

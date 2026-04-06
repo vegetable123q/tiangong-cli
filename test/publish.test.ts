@@ -4,6 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { collectPublishInputs, normalizePublishRequest, runPublish } from '../src/lib/publish.js';
+import type { FetchLike } from '../src/lib/http.js';
+import {
+  buildSupabaseTestEnv,
+  isSupabaseAuthTokenUrl,
+  makeSupabaseAuthResponse,
+} from './helpers/supabase-auth.js';
 
 function writeJson(filePath: string, value: unknown): void {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -63,6 +69,16 @@ function makeResponse(options: {
       return options.body ?? '';
     },
   };
+}
+
+function withSupabaseAuth(fetchImpl: FetchLike): FetchLike {
+  return (async (input, init) => {
+    if (isSupabaseAuthTokenUrl(String(input))) {
+      return makeSupabaseAuthResponse();
+    }
+
+    return fetchImpl(input, init);
+  }) as FetchLike;
 }
 
 test('normalizePublishRequest resolves paths relative to the request file and applies defaults', () => {
@@ -438,11 +454,11 @@ test('runPublish uses default Supabase REST dataset executors when runtime env a
   try {
     const report = await runPublish({
       inputPath: requestPath,
-      env: {
+      env: buildSupabaseTestEnv({
         TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
         TIANGONG_LCA_API_KEY: 'key',
-      } as NodeJS.ProcessEnv,
-      fetchImpl: async (url, init) => {
+      }),
+      fetchImpl: withSupabaseAuth(async (url, init) => {
         observed.push({
           method: String(init?.method ?? 'GET'),
           url: String(url),
@@ -470,7 +486,7 @@ test('runPublish uses default Supabase REST dataset executors when runtime env a
           status: 200,
           body: '[{"id":"ok"}]',
         });
-      },
+      }),
       now: new Date('2026-03-28T00:00:00Z'),
     });
 
