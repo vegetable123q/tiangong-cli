@@ -78,6 +78,7 @@ test('runProcessGet can fall back to process.env and global fetch', async () => 
   const originalBaseUrl = process.env.TIANGONG_LCA_API_BASE_URL;
   const originalApiKey = process.env.TIANGONG_LCA_API_KEY;
   const originalPublishableKey = process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+  const originalSessionMemoryOnly = process.env.TIANGONG_LCA_SESSION_MEMORY_ONLY;
   const testEnv = buildSupabaseTestEnv({
     TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
     TIANGONG_LCA_API_KEY: 'secret-token',
@@ -86,6 +87,7 @@ test('runProcessGet can fall back to process.env and global fetch', async () => 
   process.env.TIANGONG_LCA_API_BASE_URL = testEnv.TIANGONG_LCA_API_BASE_URL;
   process.env.TIANGONG_LCA_API_KEY = testEnv.TIANGONG_LCA_API_KEY;
   process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY = testEnv.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+  process.env.TIANGONG_LCA_SESSION_MEMORY_ONLY = testEnv.TIANGONG_LCA_SESSION_MEMORY_ONLY;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     if (isSupabaseAuthTokenUrl(String(input))) {
       return makeSupabaseAuthResponse();
@@ -135,6 +137,11 @@ test('runProcessGet can fall back to process.env and global fetch', async () => 
       delete process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
     } else {
       process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY = originalPublishableKey;
+    }
+    if (originalSessionMemoryOnly === undefined) {
+      delete process.env.TIANGONG_LCA_SESSION_MEMORY_ONLY;
+    } else {
+      process.env.TIANGONG_LCA_SESSION_MEMORY_ONLY = originalSessionMemoryOnly;
     }
   }
 });

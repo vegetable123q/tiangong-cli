@@ -33,6 +33,7 @@ export function buildSupabaseTestEnv(
   return {
     TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/functions/v1',
     TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY: 'sb-publishable-key',
+    TIANGONG_LCA_SESSION_MEMORY_ONLY: '1',
     ...overrides,
     TIANGONG_LCA_API_KEY: resolvedApiKey,
   } as NodeJS.ProcessEnv;
