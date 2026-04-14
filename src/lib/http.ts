@@ -1,5 +1,7 @@
 import { CliError } from './errors.js';
 
+type JsonObject = Record<string, unknown>;
+
 export type ResponseLike = {
   ok: boolean;
   status: number;
@@ -10,6 +12,10 @@ export type ResponseLike = {
 };
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<ResponseLike>;
+
+function isRecord(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 async function parseResponse(response: ResponseLike, url: string): Promise<unknown> {
   const rawText = await response.text();
@@ -36,6 +42,27 @@ async function parseResponse(response: ResponseLike, url: string): Promise<unkno
   }
 
   return rawText;
+}
+
+export function requireRemoteOkPayload(payload: unknown, url: string): unknown {
+  if (!isRecord(payload) || payload.ok !== false) {
+    return payload;
+  }
+
+  const code =
+    typeof payload.code === 'string' && payload.code.trim()
+      ? payload.code.trim()
+      : 'REMOTE_APPLICATION_ERROR';
+  const message =
+    typeof payload.message === 'string' && payload.message.trim()
+      ? payload.message.trim()
+      : `Remote application response returned ok:false for ${url}`;
+
+  throw new CliError(message, {
+    code,
+    exitCode: 1,
+    details: payload,
+  });
 }
 
 export async function postJson(options: {

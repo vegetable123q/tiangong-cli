@@ -3,6 +3,7 @@ import { CliError } from './errors.js';
 import { writeJsonArtifact } from './artifacts.js';
 import type { FetchLike } from './http.js';
 import { readJsonInput } from './io.js';
+import { syncStateAwareProcessRecord } from './process-save-draft.js';
 import { buildRunId, resolveRunLayout } from './run.js';
 import {
   hasSupabaseRestRuntime,
@@ -785,8 +786,24 @@ function build_default_dataset_executor(options: {
   fetchImpl: FetchLike;
   timeoutMs?: number;
 }) {
-  return async (args: DatasetPublishExecutorArgs): Promise<unknown> =>
-    syncSupabaseJsonOrderedRecord({
+  return async (args: DatasetPublishExecutorArgs): Promise<unknown> => {
+    if (options.table === 'processes') {
+      return syncStateAwareProcessRecord({
+        id: args.id,
+        version: args.version,
+        payload: args.payload,
+        env: options.env,
+        fetchImpl: options.fetchImpl,
+        timeoutMs: options.timeoutMs,
+        audit: {
+          command: 'tiangong publish run',
+          source: args.source,
+          bundle_path: args.bundle_path,
+        },
+      });
+    }
+
+    return syncSupabaseJsonOrderedRecord({
       table: options.table,
       id: args.id,
       version: args.version,
@@ -796,6 +813,7 @@ function build_default_dataset_executor(options: {
       fetchImpl: options.fetchImpl,
       timeoutMs: options.timeoutMs,
     });
+  };
 }
 
 function resolve_dataset_executors(options: RunPublishOptions): PublishExecutors {

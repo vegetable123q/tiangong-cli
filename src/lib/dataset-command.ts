@@ -1,10 +1,13 @@
 import { CliError } from './errors.js';
-import type { ResponseLike } from './http.js';
+import type { FetchLike } from './http.js';
+import { postJson, requireRemoteOkPayload } from './http.js';
 import {
-  createSupabaseFetch,
-  deriveSupabaseFunctionsBaseUrl,
+  buildSupabaseAuthHeaders,
+  deriveSupabaseProjectBaseUrl,
+  requireSupabaseRestRuntime,
   type SupabaseDataRuntime,
 } from './supabase-client.js';
+import { createSupabaseDataRuntime } from './supabase-session.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -17,208 +20,202 @@ export type DatasetCommandTable =
   | 'processes'
   | 'lifecyclemodels';
 
-export type DatasetCommandName = 'create' | 'save_draft';
-
-type DatasetCommandFailurePayload = {
-  ok: false;
-  code: string;
-  message: string;
-  details?: unknown;
-};
-
-type DatasetCommandSuccessEnvelope = {
-  ok: true;
-  data?: unknown;
-};
-
-export type DatasetCommandCreateInput = {
-  table: DatasetCommandTable;
-  id: string;
-  jsonOrdered: unknown;
-  modelId?: string | null;
-  ruleVerification?: boolean | null;
-};
-
-export type DatasetCommandSaveDraftInput = DatasetCommandCreateInput & {
-  version: string;
-};
-
-export type DatasetCommandClient = {
-  create: (input: DatasetCommandCreateInput) => Promise<unknown>;
-  saveDraft: (input: DatasetCommandSaveDraftInput) => Promise<unknown>;
+export type DatasetCommandTransport = {
+  functionsBaseUrl: string;
+  publishableKey: string;
+  accessToken: string;
+  fetchImpl: FetchLike;
+  timeoutMs: number;
 };
 
 function isRecord(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function trimToken(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function command_endpoint(command: DatasetCommandName): string {
-  return command === 'create' ? 'app_dataset_create' : 'app_dataset_save_draft';
-}
-
-export function buildDatasetCommandUrl(apiBaseUrl: string, command: DatasetCommandName): string {
-  return `${deriveSupabaseFunctionsBaseUrl(apiBaseUrl)}/${command_endpoint(command)}`;
-}
-
-export function buildDatasetCommandHeaders(
-  region: string | null | undefined,
-): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  const normalizedRegion = trimToken(region);
-  if (normalizedRegion) {
-    headers['x-region'] = normalizedRegion;
-  }
-  return headers;
-}
-
-export function buildDatasetCommandBody(
-  command: DatasetCommandName,
-  input: DatasetCommandCreateInput | DatasetCommandSaveDraftInput,
-): JsonObject {
-  const body: JsonObject = {
-    table: input.table,
-    id: input.id,
-    jsonOrdered: input.jsonOrdered,
-  };
-
-  if (command === 'save_draft') {
-    body.version = (input as DatasetCommandSaveDraftInput).version;
+function trimToken(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
   }
 
-  if ('modelId' in input && input.modelId !== undefined) {
-    body.modelId = input.modelId;
-  }
-
-  if ('ruleVerification' in input && input.ruleVerification !== undefined) {
-    body.ruleVerification = input.ruleVerification;
-  }
-
-  return body;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
-function parseJsonText(rawText: string, url: string): unknown {
-  try {
-    return JSON.parse(rawText);
-  } catch (error) {
-    throw new CliError(`Remote response was not valid JSON for ${url}`, {
-      code: 'REMOTE_INVALID_JSON',
+function readOptionalRuleVerification(extraData?: JsonObject): boolean | null | undefined {
+  if (!extraData) {
+    return undefined;
+  }
+
+  if ('ruleVerification' in extraData) {
+    const value = extraData.ruleVerification;
+    if (typeof value === 'boolean' || value === null) {
+      return value;
+    }
+    return undefined;
+  }
+
+  if ('rule_verification' in extraData) {
+    const value = extraData.rule_verification;
+    if (typeof value === 'boolean' || value === null) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function readOptionalModelId(
+  extraData: JsonObject | undefined,
+  allowNull: boolean,
+): string | null | undefined {
+  if (!extraData) {
+    return undefined;
+  }
+
+  const value = extraData.modelId ?? extraData.model_id;
+  const trimmed = trimToken(value);
+  if (trimmed) {
+    return trimmed;
+  }
+
+  if (allowNull && value === null) {
+    return null;
+  }
+
+  return undefined;
+}
+
+function requireCommandSuccessPayload(payload: unknown, url: string): JsonObject {
+  const normalized = requireRemoteOkPayload(payload, url);
+  if (!isRecord(normalized) || normalized.ok !== true) {
+    throw new CliError(`Dataset command returned an unexpected payload for ${url}`, {
+      code: 'REMOTE_RESPONSE_INVALID',
       exitCode: 1,
-      details: String(error),
+      details: normalized,
     });
   }
+
+  return normalized;
 }
 
-function isDatasetCommandFailurePayload(value: unknown): value is DatasetCommandFailurePayload {
-  return (
-    isRecord(value) &&
-    value.ok === false &&
-    typeof value.code === 'string' &&
-    typeof value.message === 'string'
+async function invokeDatasetCommand(options: {
+  transport: DatasetCommandTransport;
+  commandName: 'app_dataset_create' | 'app_dataset_save_draft';
+  body: JsonObject;
+}): Promise<JsonObject> {
+  const url = `${options.transport.functionsBaseUrl}/${options.commandName}`;
+  return requireCommandSuccessPayload(
+    await postJson({
+      url,
+      headers: {
+        ...buildSupabaseAuthHeaders(
+          options.transport.publishableKey,
+          options.transport.accessToken,
+        ),
+        'Content-Type': 'application/json',
+      },
+      body: options.body,
+      timeoutMs: options.transport.timeoutMs,
+      fetchImpl: options.transport.fetchImpl,
+    }),
+    url,
   );
 }
 
-function unwrapDatasetCommandPayload(payload: unknown): unknown {
-  if (isDatasetCommandFailurePayload(payload)) {
-    throw new CliError(payload.message, {
-      code: 'REMOTE_REQUEST_FAILED',
-      exitCode: 1,
-      details: `${payload.code}: ${payload.message}`,
-    });
-  }
-
-  if (isRecord(payload) && payload.ok === true && 'data' in payload) {
-    return (payload as DatasetCommandSuccessEnvelope).data ?? null;
-  }
-
-  return payload;
+export function deriveSupabaseFunctionsBaseUrl(apiBaseUrl: string): string {
+  return `${deriveSupabaseProjectBaseUrl(apiBaseUrl)}/functions/v1`;
 }
 
-function parseDatasetCommandResponse(
-  response: ResponseLike,
-  url: string,
-  rawText: string,
-): unknown {
-  const contentType = response.headers.get('content-type') ?? '';
-  const parsed =
-    rawText.length === 0
-      ? null
-      : contentType.includes('application/json')
-        ? parseJsonText(rawText, url)
-        : rawText;
-
-  if (!response.ok) {
-    if (isDatasetCommandFailurePayload(parsed)) {
-      throw new CliError(`HTTP ${response.status} returned from ${url}`, {
-        code: 'REMOTE_REQUEST_FAILED',
-        exitCode: 1,
-        details: `${parsed.code}: ${parsed.message}`,
-      });
-    }
-
-    throw new CliError(`HTTP ${response.status} returned from ${url}`, {
-      code: 'REMOTE_REQUEST_FAILED',
-      exitCode: 1,
-      details: typeof parsed === 'string' ? parsed : rawText || undefined,
-    });
-  }
-
-  return unwrapDatasetCommandPayload(parsed);
-}
-
-async function executeDatasetCommand(
-  fetchWithAuth: typeof fetch,
-  url: string,
-  headers: Record<string, string>,
-  body: JsonObject,
-): Promise<unknown> {
-  const response = await fetchWithAuth(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  });
-  return parseDatasetCommandResponse(response, url, await response.text());
-}
-
-export function createDatasetCommandClient(options: {
+export async function buildDatasetCommandTransport(options: {
   runtime: SupabaseDataRuntime;
-  fetchImpl: (input: string, init?: RequestInit) => Promise<ResponseLike>;
+  fetchImpl: FetchLike;
   timeoutMs: number;
-  region?: string | null;
-}): DatasetCommandClient {
-  const fetchWithAuth = createSupabaseFetch(options.fetchImpl, options.timeoutMs, options.runtime);
-  const headers = buildDatasetCommandHeaders(options.region);
-  const createUrl = buildDatasetCommandUrl(options.runtime.apiBaseUrl, 'create');
-  const saveDraftUrl = buildDatasetCommandUrl(options.runtime.apiBaseUrl, 'save_draft');
-
+}): Promise<DatasetCommandTransport> {
   return {
-    create: (input) =>
-      executeDatasetCommand(
-        fetchWithAuth,
-        createUrl,
-        headers,
-        buildDatasetCommandBody('create', input),
-      ),
-    saveDraft: (input) =>
-      executeDatasetCommand(
-        fetchWithAuth,
-        saveDraftUrl,
-        headers,
-        buildDatasetCommandBody('save_draft', input),
-      ),
+    functionsBaseUrl: deriveSupabaseFunctionsBaseUrl(options.runtime.apiBaseUrl),
+    publishableKey: options.runtime.publishableKey,
+    accessToken: await options.runtime.getAccessToken(),
+    fetchImpl: options.fetchImpl,
+    timeoutMs: options.timeoutMs,
   };
 }
 
+export async function resolveDatasetCommandTransport(options: {
+  env: NodeJS.ProcessEnv;
+  fetchImpl: FetchLike;
+  timeoutMs: number;
+}): Promise<DatasetCommandTransport> {
+  return buildDatasetCommandTransport({
+    runtime: createSupabaseDataRuntime({
+      runtime: requireSupabaseRestRuntime(options.env),
+      fetchImpl: options.fetchImpl,
+      timeoutMs: options.timeoutMs,
+    }),
+    fetchImpl: options.fetchImpl,
+    timeoutMs: options.timeoutMs,
+  });
+}
+
+export async function createDatasetRecord(options: {
+  transport: DatasetCommandTransport;
+  table: DatasetCommandTable;
+  id: string;
+  payload: JsonObject;
+  extraData?: JsonObject;
+}): Promise<JsonObject> {
+  const body: JsonObject = {
+    table: options.table,
+    id: options.id,
+    jsonOrdered: options.payload,
+  };
+  const modelId = readOptionalModelId(options.extraData, true);
+  if (modelId !== undefined) {
+    body.modelId = modelId;
+  }
+  const ruleVerification = readOptionalRuleVerification(options.extraData);
+  if (ruleVerification !== undefined) {
+    body.ruleVerification = ruleVerification;
+  }
+
+  return invokeDatasetCommand({
+    transport: options.transport,
+    commandName: 'app_dataset_create',
+    body,
+  });
+}
+
+export async function saveDraftDatasetRecord(options: {
+  transport: DatasetCommandTransport;
+  table: DatasetCommandTable;
+  id: string;
+  version: string;
+  payload: JsonObject;
+  extraData?: JsonObject;
+}): Promise<JsonObject> {
+  const body: JsonObject = {
+    table: options.table,
+    id: options.id,
+    version: options.version,
+    jsonOrdered: options.payload,
+  };
+  const modelId = readOptionalModelId(options.extraData, false);
+  if (modelId !== undefined) {
+    body.modelId = modelId;
+  }
+  const ruleVerification = readOptionalRuleVerification(options.extraData);
+  if (ruleVerification !== undefined) {
+    body.ruleVerification = ruleVerification;
+  }
+
+  return invokeDatasetCommand({
+    transport: options.transport,
+    commandName: 'app_dataset_save_draft',
+    body,
+  });
+}
+
 export const __testInternals = {
-  buildDatasetCommandBody,
-  buildDatasetCommandHeaders,
-  buildDatasetCommandUrl,
-  command_endpoint,
-  parseDatasetCommandResponse,
-  unwrapDatasetCommandPayload,
+  deriveSupabaseFunctionsBaseUrl,
+  readOptionalModelId,
+  readOptionalRuleVerification,
 };

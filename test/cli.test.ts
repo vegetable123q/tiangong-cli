@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { executeCli } from '../src/cli.js';
@@ -58,7 +58,7 @@ test('executeCli prints main help when no command is given', async () => {
   assert.match(result.stdout, /Unified TianGong command entrypoint/u);
   assert.match(result.stdout, /Implemented Commands:/u);
   assert.match(result.stdout, /Planned Surface \(not implemented yet\):/u);
-  assert.match(result.stdout, /process\s+get \| auto-build/u);
+  assert.match(result.stdout, /process\s+get \| list \| auto-build/u);
   assert.match(result.stdout, /process\s+auto-build/u);
   assert.match(result.stdout, /lifecyclemodel auto-build/u);
   assert.match(result.stdout, /lifecyclemodel auto-build \| validate-build \| publish-build/u);
@@ -85,7 +85,12 @@ test('executeCli main help reports loaded dotenv metadata when available', async
 test('executeCli prints version', async () => {
   const result = await executeCli(['--version'], makeDeps());
   assert.equal(result.exitCode, 0);
-  assert.equal(result.stdout, '0.0.1\n');
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as {
+    version: string;
+  };
+  assert.equal(result.stdout, `${packageJson.version}\n`);
 });
 
 test('executeCli returns doctor text and success status', async () => {
@@ -177,6 +182,10 @@ test('executeCli returns help for publish and validation subcommands', async () 
   const publishHelp = await executeCli(['publish', 'run', '--help'], makeDeps());
   assert.equal(publishHelp.exitCode, 0);
   assert.match(publishHelp.stdout, /--out-dir/u);
+  assert.match(
+    publishHelp.stdout,
+    /Relative out_dir values from the request body or --out-dir resolve from the request file directory\./u,
+  );
 
   const validationHelp = await executeCli(['validation', 'run', '--help'], makeDeps());
   assert.equal(validationHelp.exitCode, 0);
@@ -184,10 +193,12 @@ test('executeCli returns help for publish and validation subcommands', async () 
 
   const reviewHelp = await executeCli(['review', 'process', '--help'], makeDeps());
   assert.equal(reviewHelp.exitCode, 0);
-  assert.match(
-    reviewHelp.stdout,
-    /tiangong review process --run-root <dir> --run-id <id> --out-dir <dir>/u,
+  assert.ok(
+    reviewHelp.stdout.includes(
+      'tiangong review process (--rows-file <file> | --run-root <dir>) --out-dir <dir>',
+    ),
   );
+  assert.match(reviewHelp.stdout, /full process list reports with rows\[\] are also accepted/u);
   assert.match(reviewHelp.stdout, /--enable-llm/u);
 
   const reviewFlowHelp = await executeCli(['review', 'flow', '--help'], makeDeps());
@@ -969,9 +980,11 @@ test('executeCli returns help for the process namespace and implemented subcomma
   assert.equal(processHelp.exitCode, 0);
   assert.match(processHelp.stdout, /tiangong process <subcommand>/u);
   assert.match(processHelp.stdout, /get/u);
+  assert.match(processHelp.stdout, /list/u);
   assert.match(processHelp.stdout, /auto-build/u);
   assert.match(processHelp.stdout, /resume-build/u);
   assert.match(processHelp.stdout, /publish-build/u);
+  assert.match(processHelp.stdout, /save-draft/u);
   assert.match(processHelp.stdout, /batch-build/u);
 
   const getHelp = await executeCli(['process', 'get', '--help'], makeDeps());
@@ -980,6 +993,13 @@ test('executeCli returns help for the process namespace and implemented subcomma
   assert.match(getHelp.stdout, /TIANGONG_LCA_API_BASE_URL/u);
   assert.match(getHelp.stdout, /TIANGONG_LCA_API_KEY/u);
   assert.doesNotMatch(getHelp.stdout, /Planned command/u);
+
+  const listHelp = await executeCli(['process', 'list', '--help'], makeDeps());
+  assert.equal(listHelp.exitCode, 0);
+  assert.match(listHelp.stdout, /tiangong process list \[options\]/u);
+  assert.match(listHelp.stdout, /--page-size/u);
+  assert.match(listHelp.stdout, /TIANGONG_LCA_API_BASE_URL/u);
+  assert.doesNotMatch(listHelp.stdout, /Planned command/u);
 
   const autoBuildHelp = await executeCli(['process', 'auto-build', '--help'], makeDeps());
   assert.equal(autoBuildHelp.exitCode, 0);
@@ -1004,6 +1024,13 @@ test('executeCli returns help for the process namespace and implemented subcomma
   );
   assert.match(publishBuildHelp.stdout, /--run-dir/u);
   assert.doesNotMatch(publishBuildHelp.stdout, /Planned command/u);
+
+  const saveDraftHelp = await executeCli(['process', 'save-draft', '--help'], makeDeps());
+  assert.equal(saveDraftHelp.exitCode, 0);
+  assert.match(saveDraftHelp.stdout, /tiangong process save-draft --input <file>/u);
+  assert.match(saveDraftHelp.stdout, /--commit/u);
+  assert.match(saveDraftHelp.stdout, /outputs\/save-draft-rpc\/summary\.json/u);
+  assert.doesNotMatch(saveDraftHelp.stdout, /Planned command/u);
 
   const batchBuildHelp = await executeCli(['process', 'batch-build', '--help'], makeDeps());
   assert.equal(batchBuildHelp.exitCode, 0);
@@ -1107,6 +1134,116 @@ test('executeCli executes process get with injected implementation', async () =>
   assert.equal(result.exitCode, 0);
   assert.match(result.stdout, /"status": "resolved_remote_process"/u);
   assert.equal(result.stderr, '');
+});
+
+test('executeCli executes process list with injected implementation', async () => {
+  const deps = makeDeps({
+    TIANGONG_LCA_API_BASE_URL: 'https://supabase.example/functions/v1',
+    TIANGONG_LCA_API_KEY: 'supabase-api-key',
+  });
+
+  const result = await executeCli(
+    [
+      'process',
+      'list',
+      '--id',
+      'proc-1',
+      '--version',
+      '00.00.001',
+      '--user-id',
+      'user-1',
+      '--state-code',
+      '100',
+      '--all',
+      '--page-size',
+      '50',
+      '--order',
+      'version.desc',
+    ],
+    {
+      ...deps,
+      runProcessListImpl: async (options) => {
+        assert.deepEqual(options.ids, ['proc-1']);
+        assert.equal(options.version, '00.00.001');
+        assert.equal(options.userId, 'user-1');
+        assert.deepEqual(options.stateCodes, [100]);
+        assert.equal(options.all, true);
+        assert.equal(options.pageSize, 50);
+        assert.equal(options.order, 'version.desc');
+        assert.equal(options.env, deps.env);
+        assert.equal(options.fetchImpl, deps.fetchImpl);
+        return {
+          schema_version: 1,
+          generated_at_utc: '2026-03-30T00:00:00.000Z',
+          status: 'listed_remote_processes',
+          filters: {
+            ids: ['proc-1'],
+            requested_version: '00.00.001',
+            requested_user_id: 'user-1',
+            requested_state_codes: [100],
+            order: 'version.desc',
+            all: true,
+            limit: null,
+            offset: 0,
+            page_size: 50,
+          },
+          count: 1,
+          source_urls: ['https://supabase.example/rest/v1/processes?id=eq.proc-1'],
+          rows: [
+            {
+              id: 'proc-1',
+              version: '00.00.001',
+              user_id: 'user-1',
+              state_code: 100,
+              modified_at: null,
+              process: { processDataSet: { id: 'proc-1' } },
+            },
+          ],
+        };
+      },
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /"status": "listed_remote_processes"/u);
+  assert.equal(result.stderr, '');
+});
+
+test('executeCli parses non-all process list pagination flags', async () => {
+  const deps = makeDeps({
+    TIANGONG_LCA_API_BASE_URL: 'https://supabase.example/functions/v1',
+    TIANGONG_LCA_API_KEY: 'supabase-api-key',
+  });
+
+  const result = await executeCli(['process', 'list', '--limit', '5', '--offset', '3'], {
+    ...deps,
+    runProcessListImpl: async (options) => {
+      assert.equal(options.limit, 5);
+      assert.equal(options.offset, 3);
+      return {
+        schema_version: 1,
+        generated_at_utc: '2026-03-30T00:00:00.000Z',
+        status: 'listed_remote_processes',
+        filters: {
+          ids: [],
+          requested_version: null,
+          requested_user_id: null,
+          requested_state_codes: [],
+          order: 'id.asc,version.asc',
+          all: false,
+          limit: 5,
+          offset: 3,
+          page_size: null,
+        },
+        count: 0,
+        source_urls: ['https://supabase.example/rest/v1/processes?limit=5&offset=3'],
+        rows: [],
+      };
+    },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /"offset": 3/u);
 });
 
 test('executeCli executes flow get with injected implementation', async () => {
@@ -1696,6 +1833,185 @@ test('executeCli executes process publish-build with run-dir only', async () => 
   }
 });
 
+test('executeCli executes process save-draft with injected implementation', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-process-save-draft-cli-'));
+  const inputPath = path.join(dir, 'patched-processes.jsonl');
+  writeFileSync(inputPath, '{"id":"proc-1"}\n', 'utf8');
+
+  try {
+    const result = await executeCli(
+      [
+        'process',
+        'save-draft',
+        '--json',
+        '--input',
+        inputPath,
+        '--out-dir',
+        './save-root',
+        '--commit',
+      ],
+      {
+        ...makeDeps(),
+        runProcessSaveDraftImpl: async (options) => {
+          assert.equal(options.inputPath, inputPath);
+          assert.equal(options.outDir, './save-root');
+          assert.equal(options.commit, true);
+          return {
+            generated_at_utc: '2026-04-14T12:00:00.000Z',
+            input_path: inputPath,
+            input_kind: 'rows_file',
+            out_dir: path.join(dir, 'save-root'),
+            commit: true,
+            mode: 'commit',
+            status: 'completed',
+            counts: {
+              selected: 1,
+              prepared: 0,
+              executed: 1,
+              failed: 0,
+            },
+            files: {
+              normalized_input: path.join(dir, 'save-root', 'inputs', 'normalized-input.json'),
+              selected_processes: path.join(
+                dir,
+                'save-root',
+                'outputs',
+                'save-draft-rpc',
+                'selected-processes.jsonl',
+              ),
+              progress_jsonl: path.join(
+                dir,
+                'save-root',
+                'outputs',
+                'save-draft-rpc',
+                'progress.jsonl',
+              ),
+              failures_jsonl: path.join(
+                dir,
+                'save-root',
+                'outputs',
+                'save-draft-rpc',
+                'failures.jsonl',
+              ),
+              summary_json: path.join(
+                dir,
+                'save-root',
+                'outputs',
+                'save-draft-rpc',
+                'summary.json',
+              ),
+            },
+            processes: [
+              {
+                id: 'proc-1',
+                version: '01.01.000',
+                source: 'rows_file',
+                bundle_path: null,
+                status: 'executed',
+                execution: {
+                  status: 'success',
+                  operation: 'save_draft',
+                  write_path: 'cmd_dataset_save_draft',
+                  rpc_result: { ok: true },
+                  visible_row: {
+                    id: 'proc-1',
+                    version: '01.01.000',
+                    user_id: 'user-1',
+                    state_code: 0,
+                  },
+                },
+              },
+            ],
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /"status":"completed"/u);
+    assert.match(result.stdout, /"write_path":"cmd_dataset_save_draft"/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('executeCli maps process save-draft failures to exit code 1', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-process-save-draft-cli-failure-'));
+  const inputPath = path.join(dir, 'patched-processes.jsonl');
+  writeFileSync(inputPath, '{"id":"proc-1"}\n', 'utf8');
+
+  try {
+    const result = await executeCli(['process', 'save-draft', '--input', inputPath], {
+      ...makeDeps(),
+      runProcessSaveDraftImpl: async () => ({
+        generated_at_utc: '2026-04-14T12:05:00.000Z',
+        input_path: inputPath,
+        input_kind: 'rows_file',
+        out_dir: path.join(dir, 'save-root'),
+        commit: false,
+        mode: 'dry_run',
+        status: 'completed_with_failures',
+        counts: {
+          selected: 1,
+          prepared: 0,
+          executed: 0,
+          failed: 1,
+        },
+        files: {
+          normalized_input: path.join(dir, 'save-root', 'inputs', 'normalized-input.json'),
+          selected_processes: path.join(
+            dir,
+            'save-root',
+            'outputs',
+            'save-draft-rpc',
+            'selected-processes.jsonl',
+          ),
+          progress_jsonl: path.join(
+            dir,
+            'save-root',
+            'outputs',
+            'save-draft-rpc',
+            'progress.jsonl',
+          ),
+          failures_jsonl: path.join(
+            dir,
+            'save-root',
+            'outputs',
+            'save-draft-rpc',
+            'failures.jsonl',
+          ),
+          summary_json: path.join(dir, 'save-root', 'outputs', 'save-draft-rpc', 'summary.json'),
+        },
+        processes: [
+          {
+            id: 'proc-1',
+            version: '01.01.000',
+            source: 'rows_file',
+            bundle_path: null,
+            status: 'failed',
+            error: { message: 'owner required' },
+          },
+        ],
+      }),
+    });
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stdout, /owner required/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('executeCli rejects conflicting process save-draft mode flags', async () => {
+  const result = await executeCli(
+    ['process', 'save-draft', '--input', './rows.jsonl', '--commit', '--dry-run'],
+    makeDeps(),
+  );
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /INVALID_PROCESS_SAVE_DRAFT_MODE/u);
+});
+
 test('executeCli executes process batch-build with injected implementation', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-process-batch-build-cli-'));
   const inputPath = path.join(dir, 'batch-request.json');
@@ -2219,6 +2535,33 @@ test('executeCli returns parsing errors for invalid lifecyclemodel, process, and
   assert.equal(processGetResult.stdout, '');
   assert.match(processGetResult.stderr, /INVALID_ARGS/u);
 
+  const processListResult = await executeCli(['process', 'list', '--bad-flag'], makeDeps());
+  assert.equal(processListResult.exitCode, 2);
+  assert.equal(processListResult.stdout, '');
+  assert.match(processListResult.stderr, /INVALID_ARGS/u);
+
+  const processListPageSizeResult = await executeCli(
+    ['process', 'list', '--page-size', '10'],
+    makeDeps(),
+  );
+  assert.equal(processListPageSizeResult.exitCode, 2);
+  assert.match(processListPageSizeResult.stderr, /PROCESS_LIST_PAGE_SIZE_REQUIRES_ALL/u);
+
+  const processListStateCodeResult = await executeCli(
+    ['process', 'list', '--state-code=-1'],
+    makeDeps(),
+  );
+  assert.equal(processListStateCodeResult.exitCode, 2);
+  assert.match(processListStateCodeResult.stderr, /INVALID_PROCESS_LIST_STATE_CODE/u);
+
+  const processListLimitResult = await executeCli(['process', 'list', '--limit=0'], makeDeps());
+  assert.equal(processListLimitResult.exitCode, 2);
+  assert.match(processListLimitResult.stderr, /INVALID_PROCESS_LIST_LIMIT/u);
+
+  const processListOffsetResult = await executeCli(['process', 'list', '--offset=-1'], makeDeps());
+  assert.equal(processListOffsetResult.exitCode, 2);
+  assert.match(processListOffsetResult.stderr, /INVALID_PROCESS_LIST_OFFSET/u);
+
   const processResult = await executeCli(['process', 'auto-build', '--bad-flag'], makeDeps());
   assert.equal(processResult.exitCode, 2);
   assert.equal(processResult.stdout, '');
@@ -2239,6 +2582,14 @@ test('executeCli returns parsing errors for invalid lifecyclemodel, process, and
   assert.equal(processPublishResult.exitCode, 2);
   assert.equal(processPublishResult.stdout, '');
   assert.match(processPublishResult.stderr, /INVALID_ARGS/u);
+
+  const processSaveDraftResult = await executeCli(
+    ['process', 'save-draft', '--bad-flag'],
+    makeDeps(),
+  );
+  assert.equal(processSaveDraftResult.exitCode, 2);
+  assert.equal(processSaveDraftResult.stdout, '');
+  assert.match(processSaveDraftResult.stderr, /INVALID_ARGS/u);
 
   const processBatchResult = await executeCli(['process', 'batch-build', '--bad-flag'], makeDeps());
   assert.equal(processBatchResult.exitCode, 2);
@@ -2323,6 +2674,9 @@ test('executeCli executes review process with injected implementation', async ()
       {
         ...makeDeps(),
         runProcessReviewImpl: async (options) => {
+          assert.equal(options.rowsFile, undefined);
+          assert.equal(options.runRoot, path.join(dir, 'run-root'));
+          assert.equal(options.runId, 'run-001');
           assert.equal(options.startTs, '2026-03-30T00:00:00.000Z');
           assert.equal(options.endTs, '2026-03-30T00:05:00.000Z');
           assert.equal(options.logicVersion, 'v2.2');
@@ -2332,9 +2686,12 @@ test('executeCli executes review process with injected implementation', async ()
             schema_version: 1,
             generated_at_utc: '2026-03-30T00:00:00.000Z',
             status: 'completed_local_process_review',
-            run_id: options.runId,
-            run_root: options.runRoot,
+            run_id: options.runId ?? 'run-001',
+            run_root: options.runRoot ?? '',
+            rows_file: options.rowsFile ?? '',
             out_dir: options.outDir,
+            input_mode: 'run_root',
+            effective_processes_dir: path.join(dir, 'run-root', 'exports', 'processes'),
             logic_version: options.logicVersion ?? 'v2.1',
             process_count: 1,
             totals: {
@@ -2345,6 +2702,8 @@ test('executeCli executes review process with injected implementation', async ()
               energy_excluded: 0,
             },
             files: {
+              review_input_summary: path.join(dir, 'review', 'review-input-summary.json'),
+              materialization_summary: null,
               review_zh: path.join(dir, 'review', 'zh.md'),
               review_en: path.join(dir, 'review', 'en.md'),
               timing: path.join(dir, 'review', 'timing.md'),
@@ -2373,6 +2732,69 @@ test('executeCli executes review process with injected implementation', async ()
   }
 });
 
+test('executeCli passes rows-file review process input through to the implementation', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-review-cli-rows-'));
+  const rowsFile = path.join(dir, 'process-list-report.json');
+
+  try {
+    const result = await executeCli(
+      ['review', 'process', '--rows-file', rowsFile, '--out-dir', path.join(dir, 'review')],
+      {
+        ...makeDeps(),
+        runProcessReviewImpl: async (options) => {
+          assert.equal(options.rowsFile, rowsFile);
+          assert.equal(options.runRoot, undefined);
+          assert.equal(options.runId, undefined);
+          return {
+            schema_version: 1,
+            generated_at_utc: '2026-03-30T00:00:00.000Z',
+            status: 'completed_local_process_review',
+            run_id: 'process-list-report',
+            run_root: '',
+            rows_file: rowsFile,
+            out_dir: options.outDir,
+            input_mode: 'rows_file',
+            effective_processes_dir: path.join(dir, 'review', 'review-input', 'processes'),
+            logic_version: 'v2.1',
+            process_count: 1,
+            totals: {
+              raw_input: 1,
+              product_plus_byproduct_plus_waste: 1,
+              delta: 0,
+              relative_deviation: 0,
+              energy_excluded: 0,
+            },
+            files: {
+              review_input_summary: path.join(dir, 'review', 'review-input-summary.json'),
+              materialization_summary: path.join(
+                dir,
+                'review',
+                'review-input',
+                'materialization-summary.json',
+              ),
+              review_zh: path.join(dir, 'review', 'zh.md'),
+              review_en: path.join(dir, 'review', 'en.md'),
+              timing: path.join(dir, 'review', 'timing.md'),
+              unit_issue_log: path.join(dir, 'review', 'unit.md'),
+              summary: path.join(dir, 'review', 'summary.json'),
+              report: path.join(dir, 'review', 'report.json'),
+            },
+            llm: {
+              enabled: false,
+              reason: 'disabled',
+            },
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /"input_mode": "rows_file"/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('executeCli executes review process with only required flags', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-review-cli-required-'));
 
@@ -2391,6 +2813,9 @@ test('executeCli executes review process with only required flags', async () => 
       {
         ...makeDeps(),
         runProcessReviewImpl: async (options) => {
+          assert.equal(options.rowsFile, undefined);
+          assert.equal(options.runRoot, path.join(dir, 'run-root'));
+          assert.equal(options.runId, 'run-required');
           assert.equal(options.startTs, undefined);
           assert.equal(options.endTs, undefined);
           assert.equal(options.logicVersion, undefined);
@@ -2401,9 +2826,12 @@ test('executeCli executes review process with only required flags', async () => 
             schema_version: 1,
             generated_at_utc: '2026-03-30T00:00:00.000Z',
             status: 'completed_local_process_review',
-            run_id: options.runId,
-            run_root: options.runRoot,
+            run_id: options.runId ?? 'run-required',
+            run_root: options.runRoot ?? '',
+            rows_file: options.rowsFile ?? '',
             out_dir: options.outDir,
+            input_mode: 'run_root',
+            effective_processes_dir: path.join(dir, 'run-root', 'exports', 'processes'),
             logic_version: 'v2.1',
             process_count: 0,
             totals: {
@@ -2414,6 +2842,8 @@ test('executeCli executes review process with only required flags', async () => 
               energy_excluded: 0,
             },
             files: {
+              review_input_summary: path.join(dir, 'review', 'review-input-summary.json'),
+              materialization_summary: null,
               review_zh: path.join(dir, 'review', 'zh.md'),
               review_en: path.join(dir, 'review', 'en.md'),
               timing: path.join(dir, 'review', 'timing.md'),
@@ -3875,10 +4305,10 @@ test('executeCli supports alternate review flow input modes and validates numeri
 });
 
 test('executeCli returns planned command message for other unimplemented process subcommands', async () => {
-  const result = await executeCli(['process', 'list'], makeDeps());
+  const result = await executeCli(['process', 'delete'], makeDeps());
   assert.equal(result.exitCode, 2);
   assert.equal(result.stdout, '');
-  assert.match(result.stderr, /Command 'process list'/u);
+  assert.match(result.stderr, /Command 'process delete'/u);
 
   const flowRegenHelp = await executeCli(['flow', 'regen-product', '--help'], makeDeps());
   assert.equal(flowRegenHelp.exitCode, 0);

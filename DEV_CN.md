@@ -25,6 +25,7 @@
 - `tiangong search process`
 - `tiangong search lifecyclemodel`
 - `tiangong process get`
+- `tiangong process list`
 - `tiangong process auto-build`
 - `tiangong process resume-build`
 - `tiangong process publish-build`
@@ -149,7 +150,7 @@ TIANGONG_LCA_UNSTRUCTURED_RETURN_TXT=true
 | `doctor` | 无 |
 | `search flow | process | lifecyclemodel` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY`（`TIANGONG_LCA_REGION` 可选） |
 | `admin embedding-run` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY`（`TIANGONG_LCA_REGION` 可选） |
-| `process get` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
+| `process get | list` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
 | `process auto-build | resume-build | publish-build | batch-build` | 无 |
 | `lifecyclemodel auto-build | validate-build | publish-build | orchestrate` | 无 |
 | `lifecyclemodel build-resulting-process` | 本地运行默认无；若 request 打开 `process_sources.allow_remote_lookup=true`，则需要 `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
@@ -187,6 +188,7 @@ npm exec tiangong -- doctor
 npm exec tiangong -- doctor --json
 npm exec tiangong -- search flow --input ./request.json --dry-run
 npm exec tiangong -- process get --id <process-id> --version <version> --json
+npm exec tiangong -- process list --state-code 100 --limit 20 --json
 npm exec tiangong -- process auto-build --input ./examples/process-auto-build.request.json --json
 npm exec tiangong -- process resume-build --run-id <run-id> --json
 npm exec tiangong -- process publish-build --run-id <run-id> --json
@@ -197,6 +199,7 @@ npm exec tiangong -- lifecyclemodel publish-build --run-dir ./artifacts/lifecycl
 npm exec tiangong -- lifecyclemodel orchestrate plan --input ./lifecyclemodel-orchestrate.request.json --out-dir ./artifacts/lifecyclemodel_recursive/<run_id> --json
 npm exec tiangong -- lifecyclemodel build-resulting-process --input ./request.json --json
 npm exec tiangong -- lifecyclemodel publish-resulting-process --run-dir ./runs/example --publish-processes --publish-relations --json
+npm exec tiangong -- review process --rows-file ./process-list-report.json --out-dir ./review --json
 npm exec tiangong -- review process --run-root ./artifacts/process_from_flow/<run_id> --run-id <run_id> --out-dir ./review --json
 npm exec tiangong -- review flow --rows-file ./flows.json --out-dir ./flow-review --json
 npm exec tiangong -- review lifecyclemodel --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --out-dir ./lifecyclemodel-review --json
@@ -526,6 +529,11 @@ npm exec tiangong -- admin embedding-run --input ./jobs.json --dry-run
 - 输出 `collected-inputs.json`
 - 输出 `relation-manifest.json`
 - 输出 `publish-report.json`
+
+`publish run` 的 `out_dir` 路径规则固定如下：
+
+- request 里的 `out_dir` / `output_dir` 与 CLI 的 `--out-dir` 覆盖值，只要是相对路径，都按 request 文件所在目录解析
+- 如果希望输出位置不受 request 文件位置影响，传绝对路径，不要依赖当前 shell `cwd`
 
 当前实现不会把旧 MCP 数据库写入逻辑重新塞回 CLI；但当提供 Supabase runtime 时，`lifecyclemodels` / `processes` / `sources` 会默认走共享的 dataset command executor：先做 REST 精确可见性预检，再调用 `app_dataset_create` / `app_dataset_save_draft`。如果调用方显式注入 executors，则仍以显式执行器为准。
 

@@ -171,13 +171,17 @@ test('runProcessReview writes artifact-first local review outputs without LLM', 
   try {
     const report = await runProcessReview({
       runRoot,
-      runId: 'run-001',
       outDir,
       logicVersion: 'v2.1',
       now: () => new Date('2026-03-30T00:00:00.000Z'),
     });
 
     assert.equal(report.status, 'completed_local_process_review');
+    assert.equal(report.run_id, 'run-root');
+    assert.equal(report.run_root, runRoot);
+    assert.equal(report.rows_file, '');
+    assert.equal(report.input_mode, 'run_root');
+    assert.equal(report.effective_processes_dir, processDir);
     assert.equal(report.process_count, 1);
     assert.equal(report.logic_version, 'v2.1');
     assert.equal(report.llm.enabled, false);
@@ -191,8 +195,10 @@ test('runProcessReview writes artifact-first local review outputs without LLM', 
     assert.ok(existsSync(report.files.review_en));
     assert.ok(existsSync(report.files.timing));
     assert.ok(existsSync(report.files.unit_issue_log));
+    assert.ok(existsSync(report.files.review_input_summary));
     assert.ok(existsSync(report.files.summary));
     assert.ok(existsSync(report.files.report));
+    assert.equal(report.files.materialization_summary, null);
 
     const summary = JSON.parse(readFileSync(report.files.summary, 'utf8')) as JsonRecord;
     assert.equal(summary.process_count, 1);
@@ -205,6 +211,125 @@ test('runProcessReview writes artifact-first local review outputs without LLM', 
     const unitLog = readFileSync(report.files.unit_issue_log, 'utf8');
     assert.match(unitLog, /flow-electric/u);
     assert.match(unitLog, /kWh/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runProcessReview materializes rows-file and full process-list reports before reviewing', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-review-process-rows-'));
+  const rowsFile = path.join(dir, 'process-list-report.json');
+  const outDir = path.join(dir, 'review');
+
+  writeJson(rowsFile, {
+    rows: [
+      {
+        id: 'proc-a',
+        version: '01.00.001',
+        process: createProcessPayload(),
+      },
+      {
+        id: 'proc-a',
+        version: '01.00.001',
+        process: createProcessPayload(),
+      },
+    ],
+  });
+
+  try {
+    const report = await runProcessReview({
+      rowsFile,
+      outDir,
+      now: () => new Date('2026-03-30T00:00:00.000Z'),
+    });
+
+    assert.equal(report.input_mode, 'rows_file');
+    assert.equal(report.run_root, '');
+    assert.equal(report.rows_file, rowsFile);
+    assert.equal(report.run_id, 'process-list-report');
+    assert.equal(report.process_count, 1);
+    assert.ok(report.files.materialization_summary);
+    assert.ok(existsSync(report.files.review_input_summary));
+    assert.ok(existsSync(report.files.materialization_summary as string));
+
+    const materialization = JSON.parse(
+      readFileSync(report.files.materialization_summary as string, 'utf8'),
+    ) as JsonRecord;
+    assert.equal(materialization.input_row_count, 2);
+    assert.equal(materialization.materialized_process_count, 1);
+    assert.equal(materialization.duplicate_input_rows_collapsed, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runProcessReview accepts direct rows arrays and falls back to row identity defaults', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-review-process-array-'));
+  const rowsFile = path.join(dir, 'rows.json');
+  const outDir = path.join(dir, 'review');
+
+  writeJson(rowsFile, [
+    {
+      id: 'proc-fallback-id',
+      process: {
+        processDataSet: {
+          exchanges: {
+            exchange: [],
+          },
+        },
+      },
+    },
+  ]);
+
+  try {
+    const report = await runProcessReview({
+      rowsFile,
+      outDir,
+      now: () => new Date('2026-03-30T00:05:00.000Z'),
+    });
+
+    assert.equal(report.input_mode, 'rows_file');
+    assert.equal(report.process_count, 1);
+    assert.ok(report.files.materialization_summary);
+
+    const materialization = JSON.parse(
+      readFileSync(report.files.materialization_summary as string, 'utf8'),
+    ) as {
+      items: Array<{ process_key: string; file: string }>;
+    };
+    assert.equal(materialization.items[0]?.process_key, 'proc-fallback-id@01.00.000');
+    assert.match(materialization.items[0]?.file ?? '', /row-1__01\.00\.000\.json$/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runProcessReview accepts JSONL rows-file inputs and trims explicit run ids', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-review-process-jsonl-'));
+  const rowsFile = path.join(dir, 'rows.jsonl');
+  const outDir = path.join(dir, 'review');
+
+  writeFileSync(
+    rowsFile,
+    `${JSON.stringify({
+      id: 'proc-jsonl',
+      version: '01.00.123',
+      process: createProcessPayload(),
+    })}\n`,
+    'utf8',
+  );
+
+  try {
+    const report = await runProcessReview({
+      rowsFile,
+      runId: '  explicit-run-id  ',
+      outDir,
+      now: () => new Date('2026-03-30T00:06:00.000Z'),
+    });
+
+    assert.equal(report.input_mode, 'rows_file');
+    assert.equal(report.run_id, 'explicit-run-id');
+    assert.equal(report.process_count, 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -313,6 +438,84 @@ test('runProcessReview records non-fatal LLM runtime failures and validates time
       (error) => {
         assert.ok(error instanceof CliError);
         assert.equal(error.code, 'PROCESS_REVIEW_EXPORTS_NOT_FOUND');
+        return true;
+      },
+    );
+
+    await assert.rejects(
+      runProcessReview({
+        outDir: path.join(dir, 'review-missing-input'),
+      }),
+      (error) => {
+        assert.ok(error instanceof CliError);
+        assert.equal(error.code, 'PROCESS_REVIEW_INPUT_MODE_REQUIRED');
+        return true;
+      },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runProcessReview validates malformed rows-file inputs', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-review-process-invalid-rows-'));
+  const invalidJsonlPath = path.join(dir, 'rows.jsonl');
+  const invalidJsonlRowPath = path.join(dir, 'rows-scalar.jsonl');
+  const invalidJsonPath = path.join(dir, 'rows.json');
+  const invalidShapePath = path.join(dir, 'rows-shape.json');
+
+  writeFileSync(invalidJsonlPath, '{"bad"\n', 'utf8');
+  writeFileSync(invalidJsonlRowPath, '7\n', 'utf8');
+  writeFileSync(invalidJsonPath, '{bad', 'utf8');
+  writeJson(invalidShapePath, { ok: true });
+
+  try {
+    await assert.rejects(
+      runProcessReview({
+        rowsFile: invalidJsonlPath,
+        outDir: path.join(dir, 'review-jsonl'),
+      }),
+      (error) => {
+        assert.ok(error instanceof CliError);
+        assert.equal(error.code, 'PROCESS_REVIEW_ROWS_INVALID_JSONL');
+        return true;
+      },
+    );
+
+    await assert.rejects(
+      runProcessReview({
+        rowsFile: invalidJsonlRowPath,
+        outDir: path.join(dir, 'review-jsonl-row'),
+      }),
+      (error) => {
+        assert.ok(error instanceof CliError);
+        assert.equal(error.code, 'PROCESS_REVIEW_ROWS_INVALID_JSONL_ROW');
+        return true;
+      },
+    );
+
+    await assert.rejects(
+      runProcessReview({
+        rowsFile: invalidJsonPath,
+        outDir: path.join(dir, 'review-json'),
+      }),
+      (error) => {
+        assert.ok(error instanceof CliError);
+        assert.equal(error.code, 'PROCESS_REVIEW_ROWS_INVALID_JSON');
+        assert.match(error.message, /not valid JSON/u);
+        return true;
+      },
+    );
+
+    await assert.rejects(
+      runProcessReview({
+        rowsFile: invalidShapePath,
+        outDir: path.join(dir, 'review-shape'),
+      }),
+      (error) => {
+        assert.ok(error instanceof CliError);
+        assert.equal(error.code, 'PROCESS_REVIEW_ROWS_INVALID_JSON');
+        assert.match(error.message, /rows\[\]/u);
         return true;
       },
     );
@@ -633,6 +836,15 @@ test('review-process internals cover helper branches and rendering fallbacks', a
   assert.equal(minimalBase.name_zh_en_ok, false);
   assert.equal(minimalBase.completeness_score, 0);
 
+  assert.equal(
+    __testInternals.unwrapProcessPayload(
+      {
+        process: createProcessPayload(),
+      },
+      '/tmp/proc.json',
+    ).processDataSet !== undefined,
+    true,
+  );
   assert.equal(
     __testInternals.unwrapProcessPayload(
       {

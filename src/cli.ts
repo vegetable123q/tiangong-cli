@@ -4,6 +4,7 @@ import type { DotEnvLoadResult } from './lib/dotenv.js';
 import { CliError, toErrorPayload } from './lib/errors.js';
 import type { FetchLike } from './lib/http.js';
 import { stringifyJson } from './lib/io.js';
+import { loadCliPackageVersion } from './lib/package-version.js';
 import {
   runLifecyclemodelAutoBuild,
   type LifecyclemodelAutoBuildReport,
@@ -45,6 +46,11 @@ import {
   type RunProcessGetOptions,
 } from './lib/process-get.js';
 import {
+  runProcessList,
+  type ProcessListReport,
+  type RunProcessListOptions,
+} from './lib/process-list.js';
+import {
   runProcessBatchBuild,
   type ProcessBatchBuildReport,
   type RunProcessBatchBuildOptions,
@@ -59,6 +65,11 @@ import {
   type ProcessPublishBuildReport,
   type RunProcessPublishBuildOptions,
 } from './lib/process-publish-build.js';
+import {
+  runProcessSaveDraft,
+  type ProcessSaveDraftReport,
+  type RunProcessSaveDraftOptions,
+} from './lib/process-save-draft-run.js';
 import { runPublish, type PublishReport, type RunPublishOptions } from './lib/publish.js';
 import {
   runProcessReview,
@@ -156,6 +167,7 @@ export type CliDeps = {
     options: RunLifecyclemodelOrchestrateOptions,
   ) => Promise<LifecyclemodelOrchestrateReport>;
   runProcessGetImpl?: (options: RunProcessGetOptions) => Promise<ProcessGetReport>;
+  runProcessListImpl?: (options: RunProcessListOptions) => Promise<ProcessListReport>;
   runProcessAutoBuildImpl?: (
     options: RunProcessAutoBuildOptions,
   ) => Promise<ProcessAutoBuildReport>;
@@ -168,6 +180,9 @@ export type CliDeps = {
   runProcessPublishBuildImpl?: (
     options: RunProcessPublishBuildOptions,
   ) => Promise<ProcessPublishBuildReport>;
+  runProcessSaveDraftImpl?: (
+    options: RunProcessSaveDraftOptions,
+  ) => Promise<ProcessSaveDraftReport>;
   runProcessReviewImpl?: (options: RunProcessReviewOptions) => Promise<ProcessReviewReport>;
   runFlowReviewImpl?: (options: RunFlowReviewOptions) => Promise<FlowReviewReport>;
   runLifecyclemodelReviewImpl?: (
@@ -235,7 +250,7 @@ Commands:
 Implemented Commands:
   doctor     show environment diagnostics
   search     flow | process | lifecyclemodel
-  process    get | auto-build | resume-build | publish-build | batch-build
+  process    get | list | auto-build | resume-build | publish-build | save-draft | batch-build
   flow       get | list | fetch-rows | materialize-decisions | remediate | publish-version | publish-reviewed-data | build-alias-map | scan-process-flow-refs | plan-process-flow-repairs | apply-process-flow-repairs | regen-product | validate-processes
   lifecyclemodel auto-build | validate-build | publish-build | build-resulting-process | publish-resulting-process | orchestrate
   review     process | flow | lifecyclemodel
@@ -254,9 +269,11 @@ Examples:
   tiangong search flow --input ./request.json
   tiangong search process --input ./request.json --dry-run
   tiangong process get --id <process-id>
+  tiangong process list --state-code 100 --limit 20
   tiangong process auto-build --input ./pff-request.json
   tiangong process resume-build --run-id <id>
   tiangong process publish-build --run-id <id>
+  tiangong process save-draft --input ./patched-processes.jsonl --dry-run
   tiangong process batch-build --input ./batch-request.json
   tiangong lifecyclemodel auto-build --input ./lifecyclemodel-auto-build.request.json
   tiangong lifecyclemodel validate-build --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id>
@@ -275,6 +292,7 @@ Examples:
   tiangong flow apply-process-flow-repairs --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-repair-apply
   tiangong flow regen-product --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-regeneration --apply
   tiangong flow validate-processes --original-processes-file ./before.jsonl --patched-processes-file ./after.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-validation
+  tiangong review process --rows-file ./processes.jsonl --out-dir ./review
   tiangong review process --run-root ./artifacts/process_from_flow/<run_id> --run-id <run_id> --out-dir ./review
   tiangong review flow --rows-file ./flows.json --out-dir ./review
   tiangong review lifecyclemodel --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --out-dir ./lifecyclemodel-review
@@ -358,6 +376,9 @@ Options:
   --dry-run            Force publish.commit=false
   --json               Print compact JSON
   -h, --help
+
+Path rule:
+  Relative out_dir values from the request body or --out-dir resolve from the request file directory.
 `.trim();
 }
 
@@ -733,7 +754,7 @@ function renderReviewHelp(): string {
   tiangong review <subcommand> [options]
 
 Implemented Subcommands:
-  process      Review one local process build run and emit artifact-first findings
+  process      Review process build runs or rows-file snapshots and emit artifact-first findings
   flow         Review local flow governance snapshots and emit artifact-first findings
   lifecyclemodel Review one local lifecyclemodel build run and emit artifact-first findings
 
@@ -747,11 +768,12 @@ Examples:
 
 function renderReviewProcessHelp(): string {
   return `Usage:
-  tiangong review process --run-root <dir> --run-id <id> --out-dir <dir> [options]
+  tiangong review process (--rows-file <file> | --run-root <dir>) --out-dir <dir> [options]
 
 Options:
+  --rows-file <file>        Process rows JSON/JSONL file; full process list reports with rows[] are also accepted
   --run-root <dir>          Process build run root containing exports/processes
-  --run-id <id>             Process build run identifier
+  --run-id <id>             Optional review run identifier; defaults to the rows-file name or run-root basename
   --out-dir <dir>           Review artifact output directory
   --start-ts <iso>          Optional run start timestamp
   --end-ts <iso>            Optional run end timestamp
@@ -976,6 +998,34 @@ Runtime note:
 `.trim();
 }
 
+function renderProcessListHelp(): string {
+  return `Usage:
+  tiangong process list [options]
+
+Options:
+  --id <process-id>               Repeatable exact process UUID filter
+  --version <version>             Optional dataset version filter
+  --user-id <user-id>             Optional owner filter for private rows
+  --state-code <code>             Repeatable visibility filter such as 0 or 100
+  --order <expr>                  Deterministic PostgREST order expression (default: id.asc,version.asc)
+  --limit <n>                     Page size for one request (default: 100)
+  --offset <n>                    Row offset for one request (default: 0)
+  --all                           Fetch all matching rows via offset pagination
+  --page-size <n>                 Page size when --all is used (default: 100)
+  --json                          Print compact JSON
+  -h, --help
+
+Required env:
+  TIANGONG_LCA_API_BASE_URL
+  TIANGONG_LCA_API_KEY
+  TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY
+
+Runtime note:
+  The CLI derives a native @supabase/supabase-js client and deterministic read target from TIANGONG_LCA_API_BASE_URL,
+  and authenticates that client with the resolved user access token.
+`.trim();
+}
+
 function renderProcessResumeBuildHelp(): string {
   return `Usage:
   tiangong process resume-build [--run-id <id>] [--run-dir <dir>] [options]
@@ -1000,6 +1050,32 @@ Options:
 `.trim();
 }
 
+function renderProcessSaveDraftHelp(): string {
+  return `Usage:
+  tiangong process save-draft --input <file> [options]
+
+Options:
+  --input <file>     Process rows JSON/JSONL file or publish-request.json
+  --out-dir <dir>    Run root written relative to cwd when a relative path is passed
+  --commit           Execute remote save-draft writes
+  --dry-run          Keep the command local-only (default)
+  --json             Print compact JSON
+  -h, --help
+
+Environment:
+  none for local dry-run
+  TIANGONG_LCA_API_BASE_URL, TIANGONG_LCA_API_KEY, and TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY
+  when --commit executes remote writes
+
+Outputs written under --out-dir:
+  - inputs/normalized-input.json
+  - outputs/save-draft-rpc/selected-processes.jsonl
+  - outputs/save-draft-rpc/progress.jsonl
+  - outputs/save-draft-rpc/failures.jsonl
+  - outputs/save-draft-rpc/summary.json
+`.trim();
+}
+
 function renderProcessBatchBuildHelp(): string {
   return `Usage:
   tiangong process batch-build --input <file> [options]
@@ -1018,17 +1094,21 @@ function renderProcessHelp(): string {
 
 Implemented Subcommands:
   get          Load one process dataset by identifier through direct Supabase access
+  list         List visible process rows through direct Supabase access
   auto-build   Prepare a local process-from-flow run scaffold and artifact workspace
   resume-build Prepare a local resume handoff from one existing process build run
   publish-build Prepare publish handoff artifacts from one existing process build run
+  save-draft   Save canonical process datasets through the state-aware draft-maintenance path
   batch-build  Run multiple process auto-build requests through one batch-oriented CLI surface
 
 Examples:
   tiangong process --help
   tiangong process get --id <process-id>
+  tiangong process list --state-code 100 --limit 20 --help
   tiangong process auto-build --help
   tiangong process resume-build --run-id <id> --help
   tiangong process publish-build --run-id <id> --help
+  tiangong process save-draft --input ./patched-processes.jsonl --help
   tiangong process batch-build --input ./batch-request.json --help
 `.trim();
 }
@@ -2191,8 +2271,9 @@ function parseFlowListFlags(args: string[]): {
 function parseReviewProcessFlags(args: string[]): {
   help: boolean;
   json: boolean;
-  runRoot: string;
-  runId: string;
+  rowsFile: string | undefined;
+  runRoot: string | undefined;
+  runId: string | undefined;
   outDir: string;
   startTs: string | undefined;
   endTs: string | undefined;
@@ -2210,6 +2291,7 @@ function parseReviewProcessFlags(args: string[]): {
       options: {
         help: { type: 'boolean', short: 'h' },
         json: { type: 'boolean' },
+        'rows-file': { type: 'string' },
         'run-root': { type: 'string' },
         'run-id': { type: 'string' },
         'out-dir': { type: 'string' },
@@ -2246,8 +2328,9 @@ function parseReviewProcessFlags(args: string[]): {
   return {
     help: Boolean(values.help),
     json: Boolean(values.json),
-    runRoot: typeof values['run-root'] === 'string' ? values['run-root'] : '',
-    runId: typeof values['run-id'] === 'string' ? values['run-id'] : '',
+    rowsFile: typeof values['rows-file'] === 'string' ? values['rows-file'] : undefined,
+    runRoot: typeof values['run-root'] === 'string' ? values['run-root'] : undefined,
+    runId: typeof values['run-id'] === 'string' ? values['run-id'] : undefined,
     outDir: typeof values['out-dir'] === 'string' ? values['out-dir'] : '',
     startTs: typeof values['start-ts'] === 'string' ? values['start-ts'] : undefined,
     endTs: typeof values['end-ts'] === 'string' ? values['end-ts'] : undefined,
@@ -2670,6 +2753,130 @@ function parseProcessGetFlags(args: string[]): {
   };
 }
 
+function parseProcessListFlags(args: string[]): {
+  help: boolean;
+  json: boolean;
+  ids: string[];
+  version: string | null;
+  userId: string | null;
+  stateCodes: number[];
+  limit: number | null;
+  offset: number | null;
+  all: boolean;
+  pageSize: number | null;
+  order: string | null;
+} {
+  let values: ReturnType<typeof parseArgs>['values'];
+  try {
+    ({ values } = parseArgs({
+      args,
+      allowPositionals: false,
+      strict: true,
+      options: {
+        help: { type: 'boolean', short: 'h' },
+        json: { type: 'boolean' },
+        id: { type: 'string', multiple: true },
+        version: { type: 'string' },
+        'user-id': { type: 'string' },
+        'state-code': { type: 'string', multiple: true },
+        limit: { type: 'string' },
+        offset: { type: 'string' },
+        all: { type: 'boolean' },
+        'page-size': { type: 'string' },
+        order: { type: 'string' },
+      },
+    }));
+  } catch (error) {
+    throw new CliError(String(error), {
+      code: 'INVALID_ARGS',
+      exitCode: 2,
+    });
+  }
+
+  const parseOptionalPositiveIntegerFlag = (
+    value: unknown,
+    label: string,
+    code: string,
+  ): number | null => {
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new CliError(`Expected ${label} to be a positive integer.`, {
+        code,
+        exitCode: 2,
+      });
+    }
+    return parsed;
+  };
+
+  const parseOptionalNonNegativeIntegerFlag = (
+    value: unknown,
+    label: string,
+    code: string,
+  ): number | null => {
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      throw new CliError(`Expected ${label} to be a non-negative integer.`, {
+        code,
+        exitCode: 2,
+      });
+    }
+    return parsed;
+  };
+
+  const parseStateCodeValues = (value: unknown): number[] => {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value.map((entry) => {
+      const parsed = Number.parseInt(String(entry), 10);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        throw new CliError('Expected --state-code to be a non-negative integer.', {
+          code: 'INVALID_PROCESS_LIST_STATE_CODE',
+          exitCode: 2,
+        });
+      }
+      return parsed;
+    });
+  };
+  const toStringArray = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
+
+  if (values['page-size'] !== undefined && !values.all) {
+    throw new CliError('Use --page-size only with --all.', {
+      code: 'PROCESS_LIST_PAGE_SIZE_REQUIRES_ALL',
+      exitCode: 2,
+    });
+  }
+
+  return {
+    help: Boolean(values.help),
+    json: Boolean(values.json),
+    ids: toStringArray(values.id),
+    version: typeof values.version === 'string' ? values.version : null,
+    userId: typeof values['user-id'] === 'string' ? values['user-id'] : null,
+    stateCodes: parseStateCodeValues(values['state-code']),
+    limit: parseOptionalPositiveIntegerFlag(values.limit, '--limit', 'INVALID_PROCESS_LIST_LIMIT'),
+    offset: parseOptionalNonNegativeIntegerFlag(
+      values.offset,
+      '--offset',
+      'INVALID_PROCESS_LIST_OFFSET',
+    ),
+    all: Boolean(values.all),
+    pageSize: parseOptionalPositiveIntegerFlag(
+      values['page-size'],
+      '--page-size',
+      'INVALID_PROCESS_LIST_PAGE_SIZE',
+    ),
+    order: typeof values.order === 'string' ? values.order : null,
+  };
+}
+
 function parseProcessResumeBuildFlags(args: string[]): {
   help: boolean;
   json: boolean;
@@ -2735,6 +2942,51 @@ function parseProcessPublishBuildFlags(args: string[]): {
     json: Boolean(values.json),
     runId: typeof values['run-id'] === 'string' ? values['run-id'] : '',
     runDir: typeof values['run-dir'] === 'string' ? values['run-dir'] : null,
+  };
+}
+
+function parseProcessSaveDraftFlags(args: string[]): {
+  help: boolean;
+  json: boolean;
+  inputPath: string;
+  outDir: string | null;
+  commit: boolean;
+} {
+  let values: ReturnType<typeof parseArgs>['values'];
+  try {
+    ({ values } = parseArgs({
+      args,
+      allowPositionals: false,
+      strict: true,
+      options: {
+        help: { type: 'boolean', short: 'h' },
+        json: { type: 'boolean' },
+        input: { type: 'string' },
+        'out-dir': { type: 'string' },
+        commit: { type: 'boolean' },
+        'dry-run': { type: 'boolean' },
+      },
+    }));
+  } catch (error) {
+    throw new CliError(String(error), {
+      code: 'INVALID_ARGS',
+      exitCode: 2,
+    });
+  }
+
+  if (values.commit && values['dry-run']) {
+    throw new CliError('Cannot pass both --commit and --dry-run.', {
+      code: 'INVALID_PROCESS_SAVE_DRAFT_MODE',
+      exitCode: 2,
+    });
+  }
+
+  return {
+    help: Boolean(values.help),
+    json: Boolean(values.json),
+    inputPath: typeof values.input === 'string' ? values.input : '',
+    outDir: typeof values['out-dir'] === 'string' ? values['out-dir'] : null,
+    commit: Boolean(values.commit),
   };
 }
 
@@ -2813,10 +3065,12 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
     const lifecyclemodelOrchestrateImpl =
       deps.runLifecyclemodelOrchestrateImpl ?? runLifecyclemodelOrchestrate;
     const processGetImpl = deps.runProcessGetImpl ?? runProcessGet;
+    const processListImpl = deps.runProcessListImpl ?? runProcessList;
     const processAutoBuildImpl = deps.runProcessAutoBuildImpl ?? runProcessAutoBuild;
     const processBatchBuildImpl = deps.runProcessBatchBuildImpl ?? runProcessBatchBuild;
     const processResumeBuildImpl = deps.runProcessResumeBuildImpl ?? runProcessResumeBuild;
     const processPublishBuildImpl = deps.runProcessPublishBuildImpl ?? runProcessPublishBuild;
+    const processSaveDraftImpl = deps.runProcessSaveDraftImpl ?? runProcessSaveDraft;
     const processReviewImpl = deps.runProcessReviewImpl ?? runProcessReview;
     const flowReviewImpl = deps.runFlowReviewImpl ?? runFlowReview;
     const lifecyclemodelReviewImpl = deps.runLifecyclemodelReviewImpl ?? runLifecyclemodelReview;
@@ -2840,7 +3094,7 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
     const flowValidateProcessesImpl = deps.runFlowValidateProcessesImpl ?? runFlowValidateProcesses;
 
     if (flags.version) {
-      return { exitCode: 0, stdout: '0.0.1\n', stderr: '' };
+      return { exitCode: 0, stdout: `${loadCliPackageVersion(import.meta.url)}\n`, stderr: '' };
     }
 
     if (!command || command === 'help' || flags.help) {
@@ -3077,6 +3331,37 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
       };
     }
 
+    if (command === 'process' && subcommand === 'list') {
+      const processFlags = parseProcessListFlags(commandArgs);
+      if (processFlags.help) {
+        return {
+          exitCode: 0,
+          stdout: `${renderProcessListHelp()}\n`,
+          stderr: '',
+        };
+      }
+
+      const report = await processListImpl({
+        ids: processFlags.ids,
+        version: processFlags.version,
+        userId: processFlags.userId,
+        stateCodes: processFlags.stateCodes,
+        limit: processFlags.limit,
+        offset: processFlags.offset,
+        all: processFlags.all,
+        pageSize: processFlags.pageSize,
+        order: processFlags.order,
+        env: deps.env,
+        fetchImpl: deps.fetchImpl,
+      });
+
+      return {
+        exitCode: 0,
+        stdout: stringifyJson(report, processFlags.json),
+        stderr: '',
+      };
+    }
+
     if (command === 'process' && subcommand === 'auto-build') {
       const processFlags = parseProcessAutoBuildFlags(commandArgs);
       if (processFlags.help) {
@@ -3138,6 +3423,31 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
 
       return {
         exitCode: 0,
+        stdout: stringifyJson(report, processFlags.json),
+        stderr: '',
+      };
+    }
+
+    if (command === 'process' && subcommand === 'save-draft') {
+      const processFlags = parseProcessSaveDraftFlags(commandArgs);
+      if (processFlags.help) {
+        return {
+          exitCode: 0,
+          stdout: `${renderProcessSaveDraftHelp()}\n`,
+          stderr: '',
+        };
+      }
+
+      const report = await processSaveDraftImpl({
+        inputPath: processFlags.inputPath,
+        outDir: processFlags.outDir,
+        commit: processFlags.commit,
+        env: deps.env,
+        fetchImpl: deps.fetchImpl,
+      });
+
+      return {
+        exitCode: report.status === 'completed_with_failures' ? 1 : 0,
         stdout: stringifyJson(report, processFlags.json),
         stderr: '',
       };
@@ -3568,6 +3878,7 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
       }
 
       const report = await processReviewImpl({
+        rowsFile: reviewFlags.rowsFile,
         runRoot: reviewFlags.runRoot,
         runId: reviewFlags.runId,
         outDir: reviewFlags.outDir,

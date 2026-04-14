@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getJson, postJson } from '../src/lib/http.js';
+import { CliError } from '../src/lib/errors.js';
+import { getJson, postJson, requireRemoteOkPayload } from '../src/lib/http.js';
 
 test('postJson returns parsed JSON payloads', async () => {
   const payload = await postJson({
@@ -125,4 +126,24 @@ test('getJson sends GET requests and returns parsed JSON payloads', async () => 
   assert.equal(observedMethod, 'GET');
   assert.equal(observedBody, undefined);
   assert.deepEqual(payload, { hello: 'world' });
+});
+
+test('requireRemoteOkPayload normalizes blank application error fields', () => {
+  assert.throws(
+    () =>
+      requireRemoteOkPayload(
+        {
+          ok: false,
+          code: '   ',
+          message: '   ',
+        },
+        'https://example.com/rpc',
+      ),
+    (error) => {
+      assert.ok(error instanceof CliError);
+      assert.equal(error.code, 'REMOTE_APPLICATION_ERROR');
+      assert.match(error.message, /ok:false/u);
+      return true;
+    },
+  );
 });

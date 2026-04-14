@@ -1,7 +1,18 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  __testInternals,
+  createDatasetRecord,
+  resolveDatasetCommandTransport,
+  saveDraftDatasetRecord,
+} from '../src/lib/dataset-command.js';
 import { CliError } from '../src/lib/errors.js';
-import { createDatasetCommandClient, __testInternals } from '../src/lib/dataset-command.js';
+import type { FetchLike } from '../src/lib/http.js';
+import {
+  buildSupabaseTestEnv,
+  isSupabaseAuthTokenUrl,
+  makeSupabaseAuthResponse,
+} from './helpers/supabase-auth.js';
 
 function makeResponse(options: {
   ok: boolean;
@@ -25,264 +36,178 @@ function makeResponse(options: {
   };
 }
 
-const runtime = {
-  apiBaseUrl: 'https://example.supabase.co/rest/v1',
-  publishableKey: 'sb-publishable-key',
-  getAccessToken: async () => 'access-token',
-  refreshAccessToken: async () => 'refreshed-access-token',
-};
+function withSupabaseAuthBootstrap(fetchImpl: FetchLike): FetchLike {
+  return async (url, init) => {
+    if (isSupabaseAuthTokenUrl(String(url))) {
+      return makeSupabaseAuthResponse();
+    }
 
-test('dataset command helpers derive URLs, headers, bodies, and unwrap success envelopes', () => {
-  assert.equal(__testInternals.command_endpoint('create'), 'app_dataset_create');
-  assert.equal(__testInternals.command_endpoint('save_draft'), 'app_dataset_save_draft');
-  assert.equal(
-    __testInternals.buildDatasetCommandUrl('https://example.supabase.co', 'create'),
-    'https://example.supabase.co/functions/v1/app_dataset_create',
-  );
-  assert.equal(
-    __testInternals.buildDatasetCommandUrl('https://example.supabase.co/rest/v1', 'save_draft'),
-    'https://example.supabase.co/functions/v1/app_dataset_save_draft',
-  );
-  assert.deepEqual(__testInternals.buildDatasetCommandHeaders('us-east-1'), {
-    'Content-Type': 'application/json',
-    'x-region': 'us-east-1',
-  });
-  assert.deepEqual(__testInternals.buildDatasetCommandHeaders('  '), {
-    'Content-Type': 'application/json',
-  });
-  assert.deepEqual(
-    __testInternals.buildDatasetCommandBody('create', {
-      table: 'flows',
-      id: 'flow-1',
-      jsonOrdered: { flowDataSet: {} },
-      ruleVerification: false,
-    }),
-    {
-      table: 'flows',
-      id: 'flow-1',
-      jsonOrdered: { flowDataSet: {} },
-      ruleVerification: false,
-    },
-  );
-  assert.deepEqual(
-    __testInternals.buildDatasetCommandBody('save_draft', {
-      table: 'processes',
-      id: 'proc-1',
-      version: '01.00.001',
-      jsonOrdered: { processDataSet: {} },
-      modelId: 'model-1',
-    }),
-    {
-      table: 'processes',
-      id: 'proc-1',
-      version: '01.00.001',
-      jsonOrdered: { processDataSet: {} },
-      modelId: 'model-1',
-    },
-  );
-  assert.deepEqual(
-    __testInternals.unwrapDatasetCommandPayload({
-      ok: true,
-      data: { id: 'flow-1', version: '01.00.001' },
-    }),
-    { id: 'flow-1', version: '01.00.001' },
-  );
-  assert.equal(
-    __testInternals.unwrapDatasetCommandPayload({
-      ok: true,
-      data: null,
-    }),
-    null,
-  );
-  assert.equal(__testInternals.unwrapDatasetCommandPayload('plain-text'), 'plain-text');
+    return fetchImpl(String(url), init);
+  };
+}
 
-  assert.throws(
-    () =>
-      __testInternals.unwrapDatasetCommandPayload({
-        ok: false,
-        code: 'DATASET_OWNER_REQUIRED',
-        message: 'Only the dataset owner can save draft changes',
-      }),
-    (error) =>
-      error instanceof CliError &&
-      error.code === 'REMOTE_REQUEST_FAILED' &&
-      error.details === 'DATASET_OWNER_REQUIRED: Only the dataset owner can save draft changes',
+test('dataset command helper derives functions base URLs from supported API base shapes', () => {
+  assert.equal(
+    __testInternals.deriveSupabaseFunctionsBaseUrl('https://example.supabase.co'),
+    'https://example.supabase.co/functions/v1',
+  );
+  assert.equal(
+    __testInternals.deriveSupabaseFunctionsBaseUrl('https://example.supabase.co/rest/v1'),
+    'https://example.supabase.co/functions/v1',
+  );
+  assert.equal(
+    __testInternals.deriveSupabaseFunctionsBaseUrl('https://example.supabase.co/functions/v1'),
+    'https://example.supabase.co/functions/v1',
   );
 });
 
-test('dataset command client posts create and save-draft requests to edge-function endpoints', async () => {
-  const observed: Array<{ url: string; method: string; headers: Headers; body: string }> = [];
-  let callCount = 0;
-  const client = createDatasetCommandClient({
-    runtime,
-    fetchImpl: async (url, init) => {
+test('dataset command helper posts create and save-draft payloads with normalized field names', async () => {
+  const observed: Array<{ url: string; method: string; body?: string }> = [];
+  const transport = await resolveDatasetCommandTransport({
+    env: buildSupabaseTestEnv({
+      TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/rest/v1',
+      TIANGONG_LCA_API_KEY: 'key',
+    }),
+    fetchImpl: withSupabaseAuthBootstrap(async (url, init) => {
       observed.push({
-        url,
-        method: String(init?.method ?? ''),
-        headers: new Headers(init?.headers),
-        body: typeof init?.body === 'string' ? init.body : '',
+        url: String(url),
+        method: String(init?.method ?? 'GET'),
+        body: typeof init?.body === 'string' ? init.body : undefined,
       });
-      callCount += 1;
+
       return makeResponse({
         ok: true,
         status: 200,
-        body: JSON.stringify({
-          ok: true,
-          command: callCount === 1 ? 'dataset_create' : 'dataset_save_draft',
-          data: callCount === 1 ? { id: 'flow-1' } : { id: 'flow-1', version: '01.00.001' },
-        }),
+        body: '{"ok":true,"data":{"id":"ok"}}',
       });
+    }),
+    timeoutMs: 10,
+  });
+
+  await createDatasetRecord({
+    transport,
+    table: 'flows',
+    id: '11111111-1111-1111-1111-111111111111',
+    payload: { flowDataSet: {} },
+    extraData: {
+      model_id: null,
+      rule_verification: false,
     },
-    timeoutMs: 25,
-    region: 'us-east-1',
+  });
+  await saveDraftDatasetRecord({
+    transport,
+    table: 'processes',
+    id: '22222222-2222-2222-2222-222222222222',
+    version: '01.00.001',
+    payload: { processDataSet: {} },
+    extraData: {
+      modelId: '33333333-3333-3333-3333-333333333333',
+      ruleVerification: null,
+    },
   });
 
   assert.deepEqual(
-    await client.create({
-      table: 'flows',
-      id: 'flow-1',
-      jsonOrdered: { flowDataSet: {} },
-      ruleVerification: null,
-    }),
-    { id: 'flow-1' },
+    observed.map((entry) => entry.method),
+    ['POST', 'POST'],
   );
-  assert.deepEqual(
-    await client.saveDraft({
-      table: 'processes',
-      id: 'proc-1',
-      version: '01.00.001',
-      jsonOrdered: { processDataSet: {} },
-      modelId: 'model-1',
-    }),
-    { id: 'flow-1', version: '01.00.001' },
-  );
-
-  assert.deepEqual(
-    observed.map((entry) => [entry.method, entry.url]),
-    [
-      ['POST', 'https://example.supabase.co/functions/v1/app_dataset_create'],
-      ['POST', 'https://example.supabase.co/functions/v1/app_dataset_save_draft'],
-    ],
-  );
-  assert.equal(observed[0]?.headers.get('Authorization'), 'Bearer access-token');
-  assert.equal(observed[0]?.headers.get('apikey'), 'sb-publishable-key');
-  assert.equal(observed[0]?.headers.get('x-region'), 'us-east-1');
+  assert.match(observed[0]?.url ?? '', /\/functions\/v1\/app_dataset_create$/u);
+  assert.match(observed[1]?.url ?? '', /\/functions\/v1\/app_dataset_save_draft$/u);
   assert.deepEqual(JSON.parse(observed[0]?.body ?? '{}'), {
     table: 'flows',
-    id: 'flow-1',
-    jsonOrdered: { flowDataSet: {} },
-    ruleVerification: null,
+    id: '11111111-1111-1111-1111-111111111111',
+    jsonOrdered: {
+      flowDataSet: {},
+    },
+    modelId: null,
+    ruleVerification: false,
   });
   assert.deepEqual(JSON.parse(observed[1]?.body ?? '{}'), {
     table: 'processes',
-    id: 'proc-1',
+    id: '22222222-2222-2222-2222-222222222222',
     version: '01.00.001',
-    jsonOrdered: { processDataSet: {} },
-    modelId: 'model-1',
+    jsonOrdered: {
+      processDataSet: {},
+    },
+    modelId: '33333333-3333-3333-3333-333333333333',
+    ruleVerification: null,
   });
 });
 
-test('dataset command client maps structured command failures to CliError', async () => {
-  const client = createDatasetCommandClient({
-    runtime,
-    fetchImpl: async () =>
+test('dataset command helper rejects ok:false application payloads', async () => {
+  const transport = await resolveDatasetCommandTransport({
+    env: buildSupabaseTestEnv({
+      TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
+      TIANGONG_LCA_API_KEY: 'key',
+    }),
+    fetchImpl: withSupabaseAuthBootstrap(async () =>
       makeResponse({
-        ok: false,
-        status: 403,
-        body: JSON.stringify({
-          ok: false,
-          code: 'DATASET_OWNER_REQUIRED',
-          message: 'Only the dataset owner can save draft changes',
-        }),
+        ok: true,
+        status: 200,
+        body: '{"ok":false,"code":"OWNERSHIP_REQUIRED","message":"blocked"}',
       }),
-    timeoutMs: 25,
-    region: null,
+    ),
+    timeoutMs: 10,
   });
 
   await assert.rejects(
     () =>
-      client.saveDraft({
-        table: 'sources',
-        id: 'src-1',
-        version: '01.00.001',
-        jsonOrdered: { sourceDataSet: {} },
+      createDatasetRecord({
+        transport,
+        table: 'flows',
+        id: '44444444-4444-4444-4444-444444444444',
+        payload: { flowDataSet: {} },
       }),
-    (error) =>
-      error instanceof CliError &&
-      error.code === 'REMOTE_REQUEST_FAILED' &&
-      error.details === 'DATASET_OWNER_REQUIRED: Only the dataset owner can save draft changes',
+    (error) => {
+      assert.ok(error instanceof CliError);
+      assert.equal(error.code, 'OWNERSHIP_REQUIRED');
+      return true;
+    },
   );
 });
 
-test('dataset command response parsing handles plain text and invalid JSON branches', async () => {
+test('dataset command helper normalizes optional metadata helpers and rejects malformed success payloads', async () => {
+  assert.equal(__testInternals.readOptionalRuleVerification(undefined), undefined);
   assert.equal(
-    __testInternals.parseDatasetCommandResponse(
+    __testInternals.readOptionalRuleVerification({ ruleVerification: 'bad' }),
+    undefined,
+  );
+  assert.equal(
+    __testInternals.readOptionalRuleVerification({ rule_verification: 'bad' }),
+    undefined,
+  );
+  assert.equal(__testInternals.readOptionalRuleVerification({ rule_verification: null }), null);
+  assert.equal(__testInternals.readOptionalModelId({ modelId: '  model-1  ' }, false), 'model-1');
+  assert.equal(__testInternals.readOptionalModelId({ modelId: '   ' }, false), undefined);
+  assert.equal(__testInternals.readOptionalModelId({ model_id: null }, true), null);
+  assert.equal(__testInternals.readOptionalModelId({ model_id: null }, false), undefined);
+
+  const transport = await resolveDatasetCommandTransport({
+    env: buildSupabaseTestEnv({
+      TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
+      TIANGONG_LCA_API_KEY: 'key',
+    }),
+    fetchImpl: withSupabaseAuthBootstrap(async () =>
       makeResponse({
         ok: true,
         status: 200,
-        contentType: 'text/plain',
-        body: 'created',
+        body: '[]',
       }),
-      'https://example.supabase.co/functions/v1/app_dataset_create',
-      'created',
     ),
-    'created',
-  );
+    timeoutMs: 10,
+  });
 
-  assert.throws(
+  await assert.rejects(
     () =>
-      __testInternals.parseDatasetCommandResponse(
-        makeResponse({
-          ok: true,
-          status: 200,
-          contentType: 'application/json',
-          body: '{broken-json',
-        }),
-        'https://example.supabase.co/functions/v1/app_dataset_create',
-        '{broken-json',
-      ),
-    (error) => error instanceof CliError && error.code === 'REMOTE_INVALID_JSON',
-  );
-
-  assert.throws(
-    () =>
-      __testInternals.parseDatasetCommandResponse(
-        makeResponse({
-          ok: false,
-          status: 500,
-          contentType: 'text/plain',
-          body: 'upstream unavailable',
-        }),
-        'https://example.supabase.co/functions/v1/app_dataset_save_draft',
-        'upstream unavailable',
-      ),
-    (error) =>
-      error instanceof CliError &&
-      error.code === 'REMOTE_REQUEST_FAILED' &&
-      error.details === 'upstream unavailable',
-  );
-
-  assert.throws(
-    () =>
-      __testInternals.parseDatasetCommandResponse(
-        {
-          ok: false,
-          status: 500,
-          headers: {
-            get() {
-              return null;
-            },
-          },
-          async text() {
-            return '';
-          },
-        },
-        'https://example.supabase.co/functions/v1/app_dataset_save_draft',
-        '',
-      ),
-    (error) =>
-      error instanceof CliError &&
-      error.code === 'REMOTE_REQUEST_FAILED' &&
-      error.details === undefined,
+      createDatasetRecord({
+        transport,
+        table: 'flows',
+        id: '55555555-5555-5555-5555-555555555555',
+        payload: { flowDataSet: {} },
+      }),
+    (error) => {
+      assert.ok(error instanceof CliError);
+      assert.equal(error.code, 'REMOTE_RESPONSE_INVALID');
+      return true;
+    },
   );
 });
