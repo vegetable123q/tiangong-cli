@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { writeJsonArtifact, writeTextArtifact } from './artifacts.js';
 import { CliError } from './errors.js';
@@ -151,11 +151,16 @@ export type ProcessReviewReport = {
   status: 'completed_local_process_review';
   run_id: string;
   run_root: string;
+  rows_file: string;
   out_dir: string;
+  input_mode: 'rows_file' | 'run_root';
+  effective_processes_dir: string;
   logic_version: string;
   process_count: number;
   totals: ProcessReviewTotals;
   files: {
+    review_input_summary: string;
+    materialization_summary: string | null;
     review_zh: string;
     review_en: string;
     timing: string;
@@ -167,8 +172,9 @@ export type ProcessReviewReport = {
 };
 
 export type RunProcessReviewOptions = {
-  runRoot: string;
-  runId: string;
+  rowsFile?: string;
+  runRoot?: string;
+  runId?: string;
   outDir: string;
   startTs?: string;
   endTs?: string;
@@ -479,6 +485,7 @@ function unwrapProcessPayload(value: unknown, filePath: string): JsonRecord {
   }
 
   const candidate =
+    (isRecord(value.process) && value.process) ||
     (isRecord(value.json_ordered) && value.json_ordered) ||
     (isRecord(value.jsonOrdered) && value.jsonOrdered) ||
     (isRecord(value.json) && value.json) ||
@@ -494,10 +501,202 @@ function unwrapProcessPayload(value: unknown, filePath: string): JsonRecord {
   return candidate;
 }
 
-function readProcessFiles(runRoot: string): string[] {
-  const processDir = path.join(runRoot, 'exports', 'processes');
+function extractProcessIdentity(value: JsonRecord, index: number): { id: string; version: string } {
+  const payload = unwrapProcessPayload(value, `row-${index + 1}`);
+  const root = payload.processDataSet as JsonRecord;
+  const processInformation = isRecord(root.processInformation) ? root.processInformation : {};
+  const dataSetInformation = isRecord(processInformation.dataSetInformation)
+    ? processInformation.dataSetInformation
+    : {};
+  const administrativeInformation = isRecord(root.administrativeInformation)
+    ? root.administrativeInformation
+    : {};
+  const publicationAndOwnership = isRecord(administrativeInformation.publicationAndOwnership)
+    ? administrativeInformation.publicationAndOwnership
+    : {};
+  const id =
+    String(dataSetInformation['common:UUID'] ?? value.id ?? '').trim() || `row-${index + 1}`;
+  const version =
+    String(publicationAndOwnership['common:dataSetVersion'] ?? value.version ?? '').trim() ||
+    '01.00.000';
+  return {
+    id,
+    version,
+  };
+}
+
+function loadReviewRows(rowsFile: string): JsonRecord[] {
+  const resolved = path.resolve(rowsFile);
+  const text = readFileSync(resolved, 'utf8');
+
+  if (resolved.endsWith('.jsonl')) {
+    return text
+      .split(/\r?\n/gu)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line, index) => {
+        try {
+          const parsed = JSON.parse(line) as unknown;
+          if (!isRecord(parsed)) {
+            throw new CliError(`Expected JSON object rows in JSONL file: ${resolved}`, {
+              code: 'PROCESS_REVIEW_ROWS_INVALID_JSONL_ROW',
+              exitCode: 2,
+            });
+          }
+          return parsed;
+        } catch (error) {
+          if (error instanceof CliError) {
+            throw error;
+          }
+          throw new CliError(
+            `Process review rows file contains invalid JSONL at line ${index + 1}.`,
+            {
+              code: 'PROCESS_REVIEW_ROWS_INVALID_JSONL',
+              exitCode: 2,
+              details: String(error),
+            },
+          );
+        }
+      });
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch (error) {
+    throw new CliError(`Process review rows file is not valid JSON: ${resolved}`, {
+      code: 'PROCESS_REVIEW_ROWS_INVALID_JSON',
+      exitCode: 2,
+      details: String(error),
+    });
+  }
+  if (Array.isArray(parsed) && parsed.every(isRecord)) {
+    return parsed;
+  }
+
+  if (isRecord(parsed) && Array.isArray(parsed.rows) && parsed.rows.every(isRecord)) {
+    return parsed.rows;
+  }
+
+  throw new CliError(`Expected JSON array of objects or a report object with rows[]: ${resolved}`, {
+    code: 'PROCESS_REVIEW_ROWS_INVALID_JSON',
+    exitCode: 2,
+  });
+}
+
+function materializeRowsFile(
+  rowsFile: string,
+  outDir: string,
+): { processesDir: string; summaryPath: string } {
+  const rows = loadReviewRows(rowsFile);
+  const targetDir = path.join(outDir, 'review-input', 'processes');
+  mkdirSync(targetDir, { recursive: true });
+
+  const byKey: Record<string, JsonRecord> = {};
+  let duplicateCount = 0;
+  rows.forEach((row, index) => {
+    const payload = unwrapProcessPayload(row, `${rowsFile}#${index + 1}`);
+    const identity = extractProcessIdentity(row, index);
+    const key = `${identity.id}@${identity.version}`;
+    if (key in byKey) {
+      duplicateCount += 1;
+    }
+    byKey[key] = payload;
+  });
+
+  const items: Array<{ process_key: string; file: string }> = [];
+  Object.entries(byKey)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .forEach(([key, payload]) => {
+      const { id, version } = extractProcessIdentity(payload, 0);
+      const fileName = `${id}__${version}.json`;
+      const filePath = path.join(targetDir, fileName);
+      writeJsonArtifact(filePath, payload);
+      items.push({
+        process_key: key,
+        file: filePath,
+      });
+    });
+
+  const summaryPath = path.join(outDir, 'review-input', 'materialization-summary.json');
+  writeJsonArtifact(summaryPath, {
+    source_rows_file: path.resolve(rowsFile),
+    input_row_count: rows.length,
+    materialized_process_count: Object.keys(byKey).length,
+    duplicate_input_rows_collapsed: duplicateCount,
+    processes_dir: targetDir,
+    items,
+  });
+
+  return {
+    processesDir: targetDir,
+    summaryPath,
+  };
+}
+
+function resolveReviewInput(options: {
+  rowsFile?: string;
+  runRoot?: string;
+  runId?: string;
+  outDir: string;
+}): {
+  inputMode: 'rows_file' | 'run_root';
+  effectiveProcessesDir: string;
+  materializationSummaryPath: string | null;
+  runId: string;
+  runRoot: string;
+  rowsFile: string;
+  reviewInputSummary: JsonRecord;
+} {
+  const declaredModes = [Boolean(options.rowsFile), Boolean(options.runRoot)].filter(Boolean);
+  if (declaredModes.length !== 1) {
+    throw new CliError('Process review requires exactly one of --rows-file or --run-root.', {
+      code: 'PROCESS_REVIEW_INPUT_MODE_REQUIRED',
+      exitCode: 2,
+    });
+  }
+
+  if (options.rowsFile) {
+    const materialized = materializeRowsFile(options.rowsFile, options.outDir);
+    return {
+      inputMode: 'rows_file',
+      effectiveProcessesDir: materialized.processesDir,
+      materializationSummaryPath: materialized.summaryPath,
+      runId: options.runId?.trim() || path.parse(options.rowsFile).name,
+      runRoot: '',
+      rowsFile: path.resolve(options.rowsFile),
+      reviewInputSummary: {
+        input_mode: 'rows_file',
+        rows_file: path.resolve(options.rowsFile),
+        run_root: '',
+        materialized_processes_dir: materialized.processesDir,
+        effective_processes_dir: materialized.processesDir,
+      },
+    };
+  }
+
+  const runRoot = path.resolve(options.runRoot!);
+  const effective = path.join(runRoot, 'exports', 'processes');
+  return {
+    inputMode: 'run_root',
+    effectiveProcessesDir: effective,
+    materializationSummaryPath: null,
+    runId: options.runId?.trim() || path.basename(runRoot),
+    runRoot,
+    rowsFile: '',
+    reviewInputSummary: {
+      input_mode: 'run_root',
+      rows_file: '',
+      run_root: runRoot,
+      materialized_processes_dir: '',
+      effective_processes_dir: effective,
+    },
+  };
+}
+
+function readProcessFiles(processDir: string): string[] {
   if (!existsSync(processDir) || !statSync(processDir).isDirectory()) {
-    throw new CliError(`Process review exports directory not found: ${processDir}`, {
+    throw new CliError(`Process review directory not found: ${processDir}`, {
       code: 'PROCESS_REVIEW_EXPORTS_NOT_FOUND',
       exitCode: 2,
     });
@@ -789,13 +988,16 @@ function renderUnitIssues(runId: string, unitIssues: UnitIssue[]): string {
 export async function runProcessReview(
   options: RunProcessReviewOptions,
 ): Promise<ProcessReviewReport> {
-  const runRoot = path.resolve(
-    requiredNonEmpty(options.runRoot, '--run-root', 'PROCESS_REVIEW_RUN_ROOT_REQUIRED'),
-  );
-  const runId = requiredNonEmpty(options.runId, '--run-id', 'PROCESS_REVIEW_RUN_ID_REQUIRED');
   const outDir = path.resolve(
     requiredNonEmpty(options.outDir, '--out-dir', 'PROCESS_REVIEW_OUT_DIR_REQUIRED'),
   );
+  const resolvedInput = resolveReviewInput({
+    rowsFile: options.rowsFile,
+    runRoot: options.runRoot,
+    runId: options.runId,
+    outDir,
+  });
+  const runId = requiredNonEmpty(resolvedInput.runId, '--run-id', 'PROCESS_REVIEW_RUN_ID_REQUIRED');
   const logicVersion = options.logicVersion?.trim() || 'v2.1';
   const fetchImpl = options.fetchImpl ?? (fetch as FetchLike);
   const env = options.env ?? process.env;
@@ -805,7 +1007,7 @@ export async function runProcessReview(
     options.llmMaxProcesses > 0
       ? options.llmMaxProcesses
       : 8;
-  const processFiles = readProcessFiles(runRoot);
+  const processFiles = readProcessFiles(resolvedInput.effectiveProcessesDir);
   const baseRows: Array<[string, BaseInfoCheck]> = [];
   const rows: ProcessReviewRow[] = [];
   const unitIssues: UnitIssue[] = [];
@@ -936,6 +1138,10 @@ export async function runProcessReview(
     totals,
     llm: llmResult,
   };
+  const reviewInputSummaryPath = writeJsonArtifact(
+    path.join(outDir, 'review-input-summary.json'),
+    resolvedInput.reviewInputSummary,
+  );
 
   const reviewZhPath = writeTextArtifact(
     path.join(outDir, 'one_flow_rerun_review_v2_1_zh.md'),
@@ -982,12 +1188,17 @@ export async function runProcessReview(
     generated_at_utc: (options.now ?? (() => new Date()))().toISOString(),
     status: 'completed_local_process_review',
     run_id: runId,
-    run_root: runRoot,
+    run_root: resolvedInput.runRoot,
+    rows_file: resolvedInput.rowsFile,
     out_dir: outDir,
+    input_mode: resolvedInput.inputMode,
+    effective_processes_dir: resolvedInput.effectiveProcessesDir,
     logic_version: logicVersion,
     process_count: processFiles.length,
     totals,
     files: {
+      review_input_summary: reviewInputSummaryPath,
+      materialization_summary: resolvedInput.materializationSummaryPath,
       review_zh: reviewZhPath,
       review_en: reviewEnPath,
       timing: timingPath,

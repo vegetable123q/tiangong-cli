@@ -105,6 +105,22 @@ test('normalizePublishRequest resolves paths relative to the request file and ap
   assert.equal(normalized.publish.retry_delay_seconds, 2);
 });
 
+test('normalizePublishRequest resolves outDirOverride relative to the request file', () => {
+  const requestPath = path.join(path.sep, 'tmp', 'tg-cli-publish', 'nested', 'request.json');
+  const requestDir = path.dirname(requestPath);
+  const normalized = normalizePublishRequest(
+    {
+      out_dir: './request-out',
+    },
+    {
+      requestPath,
+      outDirOverride: './override-out',
+    },
+  );
+
+  assert.equal(normalized.out_dir, path.resolve(requestDir, 'override-out'));
+});
+
 test('normalizePublishRequest rejects unsupported relation modes and invalid integer settings', () => {
   assert.throws(
     () =>
@@ -436,8 +452,8 @@ test('runPublish honors commit override, defers missing executors, and rejects i
   }
 });
 
-test('runPublish uses default Supabase dataset command executors when runtime env and fetch are provided', async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-publish-default-dataset-command-'));
+test('runPublish uses state-aware process draft writes and generic source updates by default', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-publish-default-rest-'));
   const requestPath = path.join(dir, 'request.json');
   const observed: Array<{ method: string; url: string; body?: string }> = [];
 
@@ -469,7 +485,7 @@ test('runPublish uses default Supabase dataset command executors when runtime en
           return makeResponse({
             ok: true,
             status: 200,
-            body: '[]',
+            body: '[{"id":"proc-default-rest","version":"01.01.000","user_id":"user-1","state_code":0}]',
           });
         }
 
@@ -478,6 +494,22 @@ test('runPublish uses default Supabase dataset command executors when runtime en
             ok: true,
             status: 200,
             body: '[{"id":"src-default-rest","version":"01.01.000","state_code":0}]',
+          });
+        }
+
+        if (String(url).includes('/functions/v1/app_dataset_save_draft')) {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            body: '{"ok":true,"command":"dataset_save_draft","data":{"id":"ok"}}',
+          });
+        }
+
+        if (String(url).includes('/rpc/cmd_dataset_save_draft')) {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            body: '{"ok":true,"id":"ok"}',
           });
         }
 
@@ -494,7 +526,18 @@ test('runPublish uses default Supabase dataset command executors when runtime en
     assert.equal(report.sources[0].status, 'executed');
     assert.deepEqual(report.processes[0].execution, {
       status: 'success',
-      operation: 'insert',
+      operation: 'save_draft',
+      write_path: 'cmd_dataset_save_draft',
+      rpc_result: {
+        id: 'ok',
+        ok: true,
+      },
+      visible_row: {
+        id: 'proc-default-rest',
+        state_code: 0,
+        user_id: 'user-1',
+        version: '01.01.000',
+      },
     });
     assert.deepEqual(report.sources[0].execution, {
       status: 'success',
@@ -504,22 +547,53 @@ test('runPublish uses default Supabase dataset command executors when runtime en
       observed.map((entry) => entry.method),
       ['GET', 'POST', 'GET', 'POST'],
     );
-    assert.match(observed[0].url, /\/rest\/v1\/processes\?select=/u);
-    assert.match(observed[1].url, /\/functions\/v1\/app_dataset_create$/u);
-    assert.match(observed[2].url, /\/rest\/v1\/sources\?select=/u);
-    assert.match(observed[3].url, /\/functions\/v1\/app_dataset_save_draft$/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
-    assert.deepEqual(JSON.parse(observed[1].body ?? '{}'), {
-      table: 'processes',
-      id: 'proc-default-rest',
-      jsonOrdered: makeCanonicalProcess('proc-default-rest'),
+test('runPublish fails truthfully when a visible process row cannot use the draft save path', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-publish-owner-blocked-'));
+  const requestPath = path.join(dir, 'request.json');
+
+  writeJson(requestPath, {
+    inputs: {
+      processes: [makeCanonicalProcess('proc-owner-blocked')],
+    },
+    publish: {
+      commit: true,
+    },
+  });
+
+  try {
+    const report = await runPublish({
+      inputPath: requestPath,
+      env: buildSupabaseTestEnv({
+        TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
+        TIANGONG_LCA_API_KEY: 'key',
+      }),
+      fetchImpl: withSupabaseAuth(async (url) => {
+        if (String(url).includes('/processes?select=')) {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            body: '[{"id":"proc-owner-blocked","version":"01.01.000","user_id":"other-user","state_code":100}]',
+          });
+        }
+
+        return makeResponse({
+          ok: true,
+          status: 200,
+          body: '[{"id":"unexpected"}]',
+        });
+      }),
+      now: new Date('2026-03-28T00:00:00Z'),
     });
-    assert.deepEqual(JSON.parse(observed[3].body ?? '{}'), {
-      table: 'sources',
-      id: 'src-default-rest',
-      version: '01.01.000',
-      jsonOrdered: makeSource('src-default-rest'),
-    });
+
+    assert.equal(report.status, 'completed_with_failures');
+    assert.equal(report.processes[0].status, 'failed');
+    assert.match(report.processes[0].error?.message ?? '', /cannot use save-draft/u);
+    assert.match(report.processes[0].error?.message ?? '', /state_code=100/u);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

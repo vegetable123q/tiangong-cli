@@ -1,0 +1,308 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { CliError } from '../src/lib/errors.js';
+import { syncStateAwareProcessRecord, __testInternals } from '../src/lib/process-save-draft.js';
+import type { FetchLike } from '../src/lib/http.js';
+import {
+  buildSupabaseTestEnv,
+  isSupabaseAuthTokenUrl,
+  makeSupabaseAuthResponse,
+} from './helpers/supabase-auth.js';
+
+function makeResponse(options: {
+  ok: boolean;
+  status: number;
+  contentType?: string;
+  body?: string;
+}) {
+  return {
+    ok: options.ok,
+    status: options.status,
+    headers: {
+      get(name: string): string | null {
+        return name.toLowerCase() === 'content-type'
+          ? (options.contentType ?? 'application/json')
+          : null;
+      },
+    },
+    async text(): Promise<string> {
+      return options.body ?? '';
+    },
+  };
+}
+
+function withSupabaseAuthBootstrap(fetchImpl: FetchLike): FetchLike {
+  return async (url, init) => {
+    if (isSupabaseAuthTokenUrl(String(url))) {
+      return makeSupabaseAuthResponse();
+    }
+
+    return fetchImpl(String(url), init);
+  };
+}
+
+test('state-aware process write routes visible drafts through cmd_dataset_save_draft', async () => {
+  const observed: Array<{ method: string; url: string; body?: string }> = [];
+  const result = await syncStateAwareProcessRecord({
+    id: 'proc-draft',
+    version: '01.00.001',
+    payload: { processDataSet: {} },
+    env: buildSupabaseTestEnv({
+      TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
+      TIANGONG_LCA_API_KEY: 'key',
+    }),
+    fetchImpl: withSupabaseAuthBootstrap(async (url, init) => {
+      observed.push({
+        method: String(init?.method ?? 'GET'),
+        url: String(url),
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      });
+
+      if (observed.length === 1) {
+        return makeResponse({
+          ok: true,
+          status: 200,
+          body: '[{"id":"proc-draft","version":"01.00.001","user_id":"user-1","state_code":0}]',
+        });
+      }
+
+      return makeResponse({
+        ok: true,
+        status: 200,
+        body: '{"ok":true,"data":{"id":"proc-draft"}}',
+      });
+    }),
+  });
+
+  assert.deepEqual(
+    observed.map((entry) => entry.method),
+    ['GET', 'POST'],
+  );
+  assert.match(observed[1]?.url ?? '', /\/rest\/v1\/rpc\/cmd_dataset_save_draft$/u);
+  assert.match(observed[1]?.body ?? '', /"p_table":"processes"/u);
+  assert.deepEqual(result, {
+    status: 'success',
+    operation: 'save_draft',
+    write_path: 'cmd_dataset_save_draft',
+    rpc_result: { ok: true, data: { id: 'proc-draft' } },
+    visible_row: {
+      id: 'proc-draft',
+      version: '01.00.001',
+      user_id: 'user-1',
+      state_code: 0,
+    },
+  });
+});
+
+test('state-aware process write rejects visible non-draft rows before raw table updates', async () => {
+  await assert.rejects(
+    () =>
+      syncStateAwareProcessRecord({
+        id: 'proc-public',
+        version: '01.00.001',
+        payload: { processDataSet: {} },
+        env: buildSupabaseTestEnv({
+          TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
+          TIANGONG_LCA_API_KEY: 'key',
+        }),
+        fetchImpl: withSupabaseAuthBootstrap(async () =>
+          makeResponse({
+            ok: true,
+            status: 200,
+            body: '[{"id":"proc-public","version":"01.00.001","user_id":"other-user","state_code":100}]',
+          }),
+        ),
+      }),
+    (error) => {
+      assert.ok(error instanceof CliError);
+      assert.equal(error.code, 'PUBLISH_PROCESS_SAVE_DRAFT_UNSUPPORTED_VISIBLE_ROW');
+      assert.match(error.message, /state_code=100/u);
+      return true;
+    },
+  );
+});
+
+test('state-aware process write treats HTTP 200 ok:false RPC payloads as failures', async () => {
+  await assert.rejects(
+    () =>
+      syncStateAwareProcessRecord({
+        id: 'proc-owner-blocked',
+        version: '01.00.001',
+        payload: { processDataSet: {} },
+        env: buildSupabaseTestEnv({
+          TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
+          TIANGONG_LCA_API_KEY: 'key',
+        }),
+        fetchImpl: withSupabaseAuthBootstrap(async (_url, init) => {
+          if (String(init?.method ?? 'GET') === 'GET') {
+            return makeResponse({
+              ok: true,
+              status: 200,
+              body: '[{"id":"proc-owner-blocked","version":"01.00.001","user_id":"other-user","state_code":0}]',
+            });
+          }
+
+          return makeResponse({
+            ok: true,
+            status: 200,
+            body: '{"ok":false,"code":"DATASET_OWNER_REQUIRED","status":403,"message":"Only the dataset owner can save draft changes"}',
+          });
+        }),
+      }),
+    (error) => {
+      assert.ok(error instanceof CliError);
+      assert.equal(error.code, 'DATASET_OWNER_REQUIRED');
+      assert.match(error.message, /Only the dataset owner can save draft changes/u);
+      return true;
+    },
+  );
+});
+
+test('state-aware process write falls back to dataset create when no exact visible row exists', async () => {
+  const observed: Array<{ method: string; url: string; body?: string }> = [];
+  const result = await syncStateAwareProcessRecord({
+    id: 'proc-new',
+    version: '01.00.001',
+    payload: { processDataSet: {} },
+    env: buildSupabaseTestEnv({
+      TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
+      TIANGONG_LCA_API_KEY: 'key',
+    }),
+    fetchImpl: withSupabaseAuthBootstrap(async (_url, init) => {
+      observed.push({
+        method: String(init?.method ?? 'GET'),
+        url: String(_url),
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      });
+      if (observed.length <= 2) {
+        return makeResponse({
+          ok: true,
+          status: 200,
+          body: '[]',
+        });
+      }
+
+      return makeResponse({
+        ok: true,
+        status: 200,
+        body: '{"ok":true,"data":{"id":"proc-new"}}',
+      });
+    }),
+  });
+
+  assert.deepEqual(
+    observed.map((entry) => entry.method),
+    ['GET', 'GET', 'POST'],
+  );
+  assert.match(observed[2]?.url ?? '', /\/functions\/v1\/app_dataset_create$/u);
+  assert.deepEqual(JSON.parse(observed[2]?.body ?? '{}'), {
+    table: 'processes',
+    id: 'proc-new',
+    jsonOrdered: {
+      processDataSet: {},
+    },
+  });
+  assert.deepEqual(result, {
+    status: 'success',
+    operation: 'insert',
+  });
+});
+
+test('state-aware process write helpers normalize edge-case visible rows', () => {
+  assert.equal(
+    __testInternals.buildVisibleRowsUrl(
+      'https://example.supabase.co/rest/v1',
+      'proc-1',
+      '01.00.001',
+    ),
+    'https://example.supabase.co/rest/v1/processes?select=id%2Cversion%2Cuser_id%2Cstate_code&id=eq.proc-1&version=eq.01.00.001',
+  );
+  assert.deepEqual(
+    __testInternals.parseVisibleRows(
+      [{ id: 'proc-1', version: '01.00.001', user_id: 'user-1', state_code: 0 }],
+      'https://example.com',
+    ),
+    [{ id: 'proc-1', version: '01.00.001', user_id: 'user-1', state_code: 0 }],
+  );
+  assert.deepEqual(
+    __testInternals.parseVisibleRows(
+      [{ id: 7, version: null, user_id: { bad: true }, state_code: 'oops' }],
+      'https://example.com',
+    ),
+    [{ id: '', version: '', user_id: null, state_code: null }],
+  );
+  assert.deepEqual(
+    __testInternals.parseVisibleRows(
+      [{ id: '   ', version: '   ', user_id: '   ', state_code: 0 }],
+      'https://example.com',
+    ),
+    [{ id: '', version: '', user_id: null, state_code: 0 }],
+  );
+  assert.deepEqual(
+    __testInternals.visibleDraftRow([
+      { id: 'proc-1', version: '01.00.001', user_id: 'user-1', state_code: 100 },
+      { id: 'proc-1', version: '01.00.001', user_id: 'user-2', state_code: 0 },
+    ]),
+    { id: 'proc-1', version: '01.00.001', user_id: 'user-2', state_code: 0 },
+  );
+  assert.throws(
+    () => __testInternals.parseVisibleRows([0], 'https://example.com'),
+    /row 0 was not a JSON object/u,
+  );
+  assert.throws(
+    () => __testInternals.parseVisibleRows('bad', 'https://example.com'),
+    /was not a JSON array/u,
+  );
+  assert.match(
+    __testInternals.buildUnsupportedVisibleRowError('proc-1', '01.00.001', [
+      { id: 'proc-1', version: '01.00.001', user_id: 'user-9', state_code: 100 },
+    ]).message,
+    /visible_owner=user-9/u,
+  );
+  assert.match(
+    __testInternals.buildUnsupportedVisibleRowError('proc-1', '01.00.001', [
+      { id: 'proc-1', version: '01.00.001', user_id: null, state_code: null },
+    ]).message,
+    /state_code=unknown/u,
+  );
+  assert.match(
+    __testInternals.buildUnsupportedVisibleRowError('proc-1', '01.00.001', []).message,
+    /visible_owner=unknown/u,
+  );
+});
+
+test('state-aware process write rejects unexpected RPC payloads even on HTTP 200', async () => {
+  await assert.rejects(
+    () =>
+      syncStateAwareProcessRecord({
+        id: 'proc-draft-invalid',
+        version: '01.00.001',
+        payload: { processDataSet: {} },
+        env: buildSupabaseTestEnv({
+          TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
+          TIANGONG_LCA_API_KEY: 'key',
+        }),
+        fetchImpl: withSupabaseAuthBootstrap(async (_url, init) => {
+          if (String(init?.method ?? 'GET') === 'GET') {
+            return makeResponse({
+              ok: true,
+              status: 200,
+              body: '[{"id":"proc-draft-invalid","version":"01.00.001","user_id":"user-1","state_code":0}]',
+            });
+          }
+
+          return makeResponse({
+            ok: true,
+            status: 200,
+            body: '[]',
+          });
+        }),
+      }),
+    (error) => {
+      assert.ok(error instanceof CliError);
+      assert.equal(error.code, 'REMOTE_RESPONSE_INVALID');
+      assert.match(error.message, /unexpected payload/u);
+      return true;
+    },
+  );
+});

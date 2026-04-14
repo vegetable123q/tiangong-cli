@@ -1,6 +1,10 @@
-import { createDatasetCommandClient, type DatasetCommandClient } from './dataset-command.js';
-import { readRuntimeEnv } from './env.js';
 import { CliError } from './errors.js';
+import {
+  buildDatasetCommandTransport,
+  createDatasetRecord,
+  saveDraftDatasetRecord,
+  type DatasetCommandTransport,
+} from './dataset-command.js';
 import type { FetchLike } from './http.js';
 import {
   createSupabaseDataClient,
@@ -113,34 +117,36 @@ async function exactVisibleRows(options: {
 }
 
 async function insertJsonOrderedRow(options: {
-  commandClient: DatasetCommandClient;
+  transport: DatasetCommandTransport;
   table: SupabaseJsonOrderedTable;
   id: string;
   payload: JsonObject;
   extraData?: JsonObject;
 }): Promise<void> {
-  await options.commandClient.create({
+  await createDatasetRecord({
+    transport: options.transport,
     table: options.table,
     id: options.id,
-    jsonOrdered: options.payload,
-    ...commandOptionsFromExtraData(options.extraData),
+    payload: options.payload,
+    extraData: options.extraData,
   });
 }
 
 async function updateJsonOrderedRow(options: {
-  commandClient: DatasetCommandClient;
+  transport: DatasetCommandTransport;
   table: SupabaseJsonOrderedTable;
   id: string;
   version: string;
   payload: JsonObject;
   extraData?: JsonObject;
 }): Promise<void> {
-  await options.commandClient.saveDraft({
+  await saveDraftDatasetRecord({
+    transport: options.transport,
     table: options.table,
     id: options.id,
     version: options.version,
-    jsonOrdered: options.payload,
-    ...commandOptionsFromExtraData(options.extraData),
+    payload: options.payload,
+    extraData: options.extraData,
   });
 }
 
@@ -153,34 +159,6 @@ function requireNonEmptyToken(value: string, label: string, code: string): strin
     });
   }
   return normalized;
-}
-
-function commandOptionsFromExtraData(extraData?: JsonObject): {
-  modelId?: string | null;
-  ruleVerification?: boolean | null;
-} {
-  if (!extraData) {
-    return {};
-  }
-
-  const result: {
-    modelId?: string | null;
-    ruleVerification?: boolean | null;
-  } = {};
-
-  if ('modelId' in extraData || 'model_id' in extraData) {
-    const modelIdValue = extraData.modelId ?? extraData.model_id;
-    result.modelId = modelIdValue === null ? null : trimToken(modelIdValue) || null;
-  }
-
-  if ('ruleVerification' in extraData || 'rule_verification' in extraData) {
-    const ruleVerificationValue = extraData.ruleVerification ?? extraData.rule_verification;
-    if (typeof ruleVerificationValue === 'boolean' || ruleVerificationValue === null) {
-      result.ruleVerification = ruleVerificationValue;
-    }
-  }
-
-  return result;
 }
 
 export function hasSupabaseRestRuntime(env: NodeJS.ProcessEnv | undefined): boolean {
@@ -218,13 +196,12 @@ export async function syncSupabaseJsonOrderedRecord(options: {
     fetchImpl: options.fetchImpl,
     timeoutMs,
   });
-  const { client, restBaseUrl } = createSupabaseDataClient(runtime, options.fetchImpl, timeoutMs);
-  const commandClient = createDatasetCommandClient({
+  const commandTransport = await buildDatasetCommandTransport({
     runtime,
     fetchImpl: options.fetchImpl,
     timeoutMs,
-    region: readRuntimeEnv(options.env).region,
   });
+  const { client, restBaseUrl } = createSupabaseDataClient(runtime, options.fetchImpl, timeoutMs);
 
   const visibleBefore = await exactVisibleRows({
     client,
@@ -243,7 +220,7 @@ export async function syncSupabaseJsonOrderedRecord(options: {
 
   if (visibleBefore.length > 0) {
     await updateJsonOrderedRow({
-      commandClient,
+      transport: commandTransport,
       table: options.table,
       id,
       version,
@@ -258,7 +235,7 @@ export async function syncSupabaseJsonOrderedRecord(options: {
 
   try {
     await insertJsonOrderedRow({
-      commandClient,
+      transport: commandTransport,
       table: options.table,
       id,
       payload: options.payload,
@@ -289,7 +266,7 @@ export async function syncSupabaseJsonOrderedRecord(options: {
     }
 
     await updateJsonOrderedRow({
-      commandClient,
+      transport: commandTransport,
       table: options.table,
       id,
       version,
@@ -308,7 +285,6 @@ export const __testInternals = {
   buildUpdateUrl,
   parseVisibleRows,
   exactVisibleRows,
-  commandOptionsFromExtraData,
   insertJsonOrderedRow,
   updateJsonOrderedRow,
   requireNonEmptyToken,

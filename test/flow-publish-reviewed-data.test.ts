@@ -597,7 +597,7 @@ test('flow publish reviewed data process helpers unwrap root payloads and map up
           },
         },
         async text() {
-          return '[{"id":"proc-updated"}]';
+          return '{"ok":true,"command":"dataset_save_draft","data":{"id":"proc-updated"}}';
         },
       };
     }),
@@ -745,11 +745,11 @@ test('runFlowReviewedPublishData can use the default flow publish-version implem
 
     return {
       ok: true,
-      status: 201,
+      status: 200,
       headers: {
         get: () => 'application/json',
       },
-      text: async () => '',
+      text: async () => '{"ok":true,"command":"dataset_create","data":{"id":"flow-default"}}',
     };
   }) as unknown as FetchLike;
 
@@ -889,7 +889,7 @@ test('runFlowReviewedPublishData prepares process rows locally, rewrites flow re
   }
 });
 
-test('runFlowReviewedPublishData commits prepared process rows through Supabase REST when process publish is requested', async () => {
+test('runFlowReviewedPublishData commits prepared process rows through dataset commands when process publish is requested', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-flow-publish-reviewed-process-commit-'));
   const processRowsFile = path.join(dir, 'reviewed-processes.json');
   const outDir = path.join(dir, 'publish-reviewed');
@@ -952,6 +952,7 @@ test('runFlowReviewedPublishData commits prepared process rows through Supabase 
       observed.map((entry) => entry.method),
       ['GET', 'POST'],
     );
+    assert.match(observed[1]?.url ?? '', /\/functions\/v1\/app_dataset_create$/u);
     assert.match(observed[1]?.body ?? '', /"jsonOrdered"/u);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -1575,14 +1576,14 @@ test('flow publish-reviewed-data helper internals cover validation, compatibilit
 
         return {
           ok: true,
-          status: 201,
+          status: 200,
           headers: {
             get() {
               return 'application/json';
             },
           },
           async text() {
-            return '[{"id":"proc-commit-plan"}]';
+            return '{"ok":true,"command":"dataset_create","data":{"id":"proc-commit-plan"}}';
           },
         };
       }),

@@ -256,34 +256,20 @@ test('runFlowPublishVersion commit executes update, insert, fallback update, and
           {
             body: [{ id: 'flow-1', version: '01.00.001', user_id: 'user-1', state_code: 100 }],
           },
-          {
-            body: { ok: true, command: 'dataset_save_draft', data: { id: 'flow-1' } },
-          },
+          { body: { ok: true, command: 'dataset_save_draft', data: { id: 'flow-1' } } },
           { body: [] },
-          {
-            body: { ok: true, command: 'dataset_create', data: { id: 'flow-2' } },
-          },
+          { body: { ok: true, command: 'dataset_create', data: { id: 'flow-2' } } },
           { body: [] },
-          {
-            ok: false,
-            status: 409,
-            body: { ok: false, code: 'DUPLICATE_VERSION', message: 'duplicate' },
-          },
+          { ok: false, status: 409, contentType: 'text/plain', rawText: 'duplicate' },
           {
             body: [{ id: 'flow-3', version: '01.00.001', user_id: 'user-3', state_code: 100 }],
           },
-          {
-            body: { ok: true, command: 'dataset_save_draft', data: { id: 'flow-3' } },
-          },
+          { body: { ok: true, command: 'dataset_save_draft', data: { id: 'flow-3' } } },
           {
             body: [{ id: 'flow-4', version: '01.00.001', user_id: 'other-user', state_code: 40 }],
           },
           { body: [] },
-          {
-            ok: false,
-            status: 500,
-            body: { ok: false, code: 'INTERNAL_ERROR', message: 'boom' },
-          },
+          { ok: false, status: 500, contentType: 'application/json', body: { message: 'boom' } },
           { body: [] },
         ],
         observed,
@@ -331,6 +317,7 @@ test('runFlowPublishVersion commit executes update, insert, fallback update, and
     );
     assert.match(observed[1]?.url ?? '', /\/functions\/v1\/app_dataset_save_draft$/u);
     assert.match(observed[3]?.url ?? '', /\/functions\/v1\/app_dataset_create$/u);
+    assert.match(observed[1]?.body ?? '', /"version":"01\.00\.001"/u);
     assert.match(observed[1]?.body ?? '', /"jsonOrdered"/u);
     assert.match(observed[3]?.body ?? '', /"id":"flow-2"/u);
   } finally {
@@ -574,19 +561,11 @@ test('runFlowPublishVersion surfaces update-after-insert-error failures when fal
       fetchImpl: makeFetchQueue(
         [
           { body: [] },
-          {
-            ok: false,
-            status: 409,
-            body: { ok: false, code: 'DUPLICATE_VERSION', message: 'duplicate' },
-          },
+          { ok: false, status: 409, contentType: 'text/plain', rawText: 'duplicate' },
           {
             body: [{ id: 'flow-1', version: '01.00.001', user_id: 'user-1', state_code: 100 }],
           },
-          {
-            ok: false,
-            status: 500,
-            body: { ok: false, code: 'SAVE_DRAFT_FAILED', message: 'patch failed' },
-          },
+          { ok: false, status: 500, contentType: 'text/plain', rawText: 'save draft failed' },
         ],
         observed,
       ),

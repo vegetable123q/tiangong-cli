@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { resolveDatasetCommandTransport } from '../src/lib/dataset-command.js';
 import { CliError } from '../src/lib/errors.js';
 import type { FetchLike } from '../src/lib/http.js';
 import {
@@ -108,6 +109,7 @@ test('supabase json_ordered write inserts when no exact row exists', async () =>
     /\/rest\/v1\/processes\?select=id%2Cversion%2Cstate_code&id=eq\.proc-1&version=eq\.01\.00\.001/u,
   );
   assert.match(observed[1]?.url ?? '', /\/functions\/v1\/app_dataset_create$/u);
+  assert.match(observed[1]?.body ?? '', /"table":"processes"/u);
   assert.match(observed[1]?.body ?? '', /"jsonOrdered"/u);
 });
 
@@ -266,58 +268,50 @@ test('append-only insert skips existing rows and validates helper branches', asy
 });
 
 test('supabase json_ordered helpers handle empty/text success payloads and invalid visible-row shapes', async () => {
+  const observed: Array<{ method: string; url: string; body?: string }> = [];
+  const fetchImpl = withSupabaseAuthBootstrap(async (url, init) => {
+    observed.push({
+      method: String(init?.method ?? 'GET'),
+      url: String(url),
+      body: typeof init?.body === 'string' ? init.body : undefined,
+    });
+
+    return makeResponse({
+      ok: true,
+      status: 200,
+      body: '{"ok":true,"data":{"id":"ok"}}',
+    });
+  });
+  const transport = await resolveDatasetCommandTransport({
+    env: buildSupabaseTestEnv({
+      TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
+      TIANGONG_LCA_API_KEY: 'key',
+    }),
+    fetchImpl,
+    timeoutMs: 10,
+  });
+
   await __testInternals.insertJsonOrderedRow({
-    commandClient: {
-      create: async () => 'created',
-      saveDraft: async () => null,
-    },
+    transport,
     table: 'processes',
     id: 'proc-text',
     payload: { processDataSet: {} },
   });
 
   await __testInternals.updateJsonOrderedRow({
-    commandClient: {
-      create: async () => null,
-      saveDraft: async () => null,
-    },
+    transport,
     table: 'processes',
     id: 'proc-empty',
     version: '01.00.001',
     payload: { processDataSet: {} },
   });
 
-  assert.deepEqual(__testInternals.commandOptionsFromExtraData({ model_id: 'model-1' }), {
-    modelId: 'model-1',
-  });
   assert.deepEqual(
-    __testInternals.commandOptionsFromExtraData({
-      modelId: 'model-2',
-      rule_verification: false,
-    }),
-    {
-      modelId: 'model-2',
-      ruleVerification: false,
-    },
+    observed.map((item) => item.method),
+    ['POST', 'POST'],
   );
-  assert.deepEqual(
-    __testInternals.commandOptionsFromExtraData({
-      model_id: null,
-      rule_verification: null,
-    }),
-    {
-      modelId: null,
-      ruleVerification: null,
-    },
-  );
-  assert.deepEqual(
-    __testInternals.commandOptionsFromExtraData({
-      model_id: '   ',
-    }),
-    {
-      modelId: null,
-    },
-  );
+  assert.match(observed[0]?.url ?? '', /\/functions\/v1\/app_dataset_create$/u);
+  assert.match(observed[1]?.url ?? '', /\/functions\/v1\/app_dataset_save_draft$/u);
 
   assert.throws(
     () => __testInternals.parseVisibleRows('not-an-array', 'https://example.com/select'),

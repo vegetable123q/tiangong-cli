@@ -4,19 +4,21 @@ Package: `@tiangong-lca/cli` Executable: `tiangong` Node: `24.x`
 
 ## Run
 
-Use the published CLI directly:
+One-off published run:
 
 ```bash
-npx -y @tiangong-lca/cli@latest --help
-npx -y @tiangong-lca/cli@latest doctor
-npx -y @tiangong-lca/cli@latest flow --help
+npm exec --yes --package=@tiangong-lca/cli@latest -- tiangong --help
+npm exec --yes --package=@tiangong-lca/cli@latest -- tiangong doctor
+npm exec --yes --package=@tiangong-lca/cli@latest -- tiangong flow --help
 ```
 
-Optional global install:
+Install the published CLI:
 
 ```bash
 npm install --global @tiangong-lca/cli
 tiangong --help
+tiangong doctor
+tiangong flow --help
 ```
 
 Run from this repository:
@@ -76,9 +78,9 @@ Minimal `search flow` request:
 Run:
 
 ```bash
-npx -y @tiangong-lca/cli@latest search flow --input ./search-flow.request.json --json
-npx -y @tiangong-lca/cli@latest search process --input ./search-process.request.json --json
-npx -y @tiangong-lca/cli@latest search lifecyclemodel --input ./search-lifecyclemodel.request.json --json
+tiangong search flow --input ./search-flow.request.json --json
+tiangong search process --input ./search-process.request.json --json
+tiangong search lifecyclemodel --input ./search-lifecyclemodel.request.json --json
 ```
 
 Empty search results should be treated as empty whether the response is `[]` or `{"data":[]}`.
@@ -86,9 +88,10 @@ Empty search results should be treated as empty whether the response is `[]` or 
 ## Read
 
 ```bash
-npx -y @tiangong-lca/cli@latest flow get --id <flow-id> --version <version> --json
-npx -y @tiangong-lca/cli@latest flow list --id <flow-id> --state-code 100 --limit 20 --json
-npx -y @tiangong-lca/cli@latest process get --id <process-id> --version <version> --json
+tiangong flow get --id <flow-id> --version <version> --json
+tiangong flow list --id <flow-id> --state-code 100 --limit 20 --json
+tiangong process get --id <process-id> --version <version> --json
+tiangong process list --state-code 100 --limit 20 --json
 ```
 
 ## Real DB Flow Review
@@ -135,15 +138,15 @@ npx -y @tiangong-lca/cli@latest process get --id <process-id> --version <version
 Run:
 
 ```bash
-npx -y @tiangong-lca/cli@latest flow fetch-rows \
+tiangong flow fetch-rows \
   --refs-file ./flow-refs.json \
   --out-dir ./flow-fetch
 
-npx -y @tiangong-lca/cli@latest review flow \
+tiangong review flow \
   --rows-file ./flow-fetch/review-input-rows.jsonl \
   --out-dir ./flow-review
 
-npx -y @tiangong-lca/cli@latest flow materialize-decisions \
+tiangong flow materialize-decisions \
   --decision-file ./approved-decisions.json \
   --flow-rows-file ./flow-fetch/review-input-rows.jsonl \
   --out-dir ./flow-decisions
@@ -167,10 +170,15 @@ Key `flow materialize-decisions` outputs:
 ## Other Common Commands
 
 ```bash
-npx -y @tiangong-lca/cli@latest review process --run-root ./artifacts/process_from_flow/<run_id> --run-id <run_id> --out-dir ./review
-npx -y @tiangong-lca/cli@latest publish run --input ./publish-request.json --dry-run
-npx -y @tiangong-lca/cli@latest doctor --json
+tiangong review process --rows-file ./process-list-report.json --out-dir ./review
+tiangong review process --run-root ./artifacts/process_from_flow/<run_id> --run-id <run_id> --out-dir ./review
+tiangong publish run --input ./publish-request.json --dry-run
+tiangong doctor --json
 ```
+
+For `publish run`, relative `out_dir` values from either the request body or `--out-dir` are resolved against the request file directory, not the shell `cwd`. Use an absolute path when you want a fixed destination independent of the request file location.
+
+For `review process`, `--rows-file` accepts either raw process rows as JSON/JSONL or the full JSON report emitted by `tiangong process list --json`, as long as it contains a `rows` array.
 
 ## More Docs
 
@@ -181,10 +189,10 @@ npx -y @tiangong-lca/cli@latest doctor --json
 ## Help
 
 ```bash
-npx -y @tiangong-lca/cli@latest --help
-npx -y @tiangong-lca/cli@latest flow --help
-npx -y @tiangong-lca/cli@latest review --help
-npx -y @tiangong-lca/cli@latest process --help
-npx -y @tiangong-lca/cli@latest lifecyclemodel --help
-npx -y @tiangong-lca/cli@latest publish --help
+tiangong --help
+tiangong flow --help
+tiangong review --help
+tiangong process --help
+tiangong lifecyclemodel --help
+tiangong publish --help
 ```

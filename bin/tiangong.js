@@ -1,12 +1,25 @@
 #!/usr/bin/env node
 
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const entryPath = path.join(rootDir, 'dist', 'src', 'main.js');
+
+export function resolveInvokedUrl(argv1 = process.argv[1]) {
+  if (!argv1) {
+    return null;
+  }
+
+  const resolvedPath = path.resolve(argv1);
+  try {
+    return pathToFileURL(realpathSync(resolvedPath)).href;
+  } catch {
+    return pathToFileURL(resolvedPath).href;
+  }
+}
 
 export async function runFromBin(argv = process.argv.slice(2), env = process.env) {
   if (!existsSync(entryPath)) {
@@ -20,7 +33,7 @@ export async function runFromBin(argv = process.argv.slice(2), env = process.env
   return main(argv, env);
 }
 
-const invokedUrl = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
+const invokedUrl = resolveInvokedUrl(process.argv[1]);
 
 if (invokedUrl && import.meta.url === invokedUrl) {
   try {
