@@ -172,6 +172,8 @@ Key `flow materialize-decisions` outputs:
 ```bash
 tiangong review process --rows-file ./process-list-report.json --out-dir ./review
 tiangong review process --run-root ./artifacts/process_from_flow/<run_id> --run-id <run_id> --out-dir ./review
+tiangong process save-draft --input ./patched-processes.jsonl --dry-run
+tiangong process save-draft --input ./patched-processes.jsonl --out-dir ./save-draft --commit
 tiangong publish run --input ./publish-request.json --dry-run
 tiangong doctor --json
 ```
@@ -179,6 +181,8 @@ tiangong doctor --json
 For `publish run`, relative `out_dir` values from either the request body or `--out-dir` are resolved against the request file directory, not the shell `cwd`. Use an absolute path when you want a fixed destination independent of the request file location.
 
 For `review process`, `--rows-file` accepts either raw process rows as JSON/JSONL or the full JSON report emitted by `tiangong process list --json`, as long as it contains a `rows` array.
+
+For `process save-draft`, canonical process payloads are validated locally with `ProcessSchema` before any `--commit` write. Schema-invalid rows remain in `outputs/save-draft-rpc/failures.jsonl` instead of being persisted.
 
 ## More Docs
 

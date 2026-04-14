@@ -1067,6 +1067,10 @@ Environment:
   TIANGONG_LCA_API_BASE_URL, TIANGONG_LCA_API_KEY, and TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY
   when --commit executes remote writes
 
+Local gate:
+  canonical process payloads are validated against ProcessSchema before any remote write;
+  schema-invalid rows stay in failures.jsonl instead of being committed
+
 Outputs written under --out-dir:
   - inputs/normalized-input.json
   - outputs/save-draft-rpc/selected-processes.jsonl
