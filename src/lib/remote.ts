@@ -1,7 +1,10 @@
 import { CliError } from './errors.js';
+import { readRuntimeEnv } from './env.js';
 import type { FetchLike } from './http.js';
 import { postJson } from './http.js';
 import { readJsonInput, stringifyJson } from './io.js';
+import { deriveSupabaseFunctionsBaseUrl, requireSupabaseRestRuntime } from './supabase-client.js';
+import { resolveSupabaseUserSession } from './supabase-session.js';
 
 type RemoteCommandSpec = {
   endpoint: string;
@@ -35,9 +38,7 @@ const REMOTE_COMMANDS: Record<string, RemoteCommandSpec> = {
 export type RemoteCommandOptions = {
   commandKey: keyof typeof REMOTE_COMMANDS;
   inputPath: string;
-  apiBaseUrl: string | null;
-  apiKey: string | null;
-  region: string | null;
+  env: NodeJS.ProcessEnv;
   timeoutMs: number;
   dryRun: boolean;
   compactJson: boolean;
@@ -45,16 +46,16 @@ export type RemoteCommandOptions = {
 };
 
 function buildUrl(baseUrl: string, endpoint: string): string {
-  return `${baseUrl.replace(/\/+$/u, '')}/${endpoint}`;
+  return `${deriveSupabaseFunctionsBaseUrl(baseUrl)}/${endpoint}`;
 }
 
 function buildHeaders(
-  apiKey: string,
+  accessToken: string,
   includeRegion: boolean,
   region: string | null,
 ): Record<string, string> {
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${apiKey}`,
+    Authorization: `Bearer ${accessToken}`,
     'Content-Type': 'application/json',
   };
   if (includeRegion && region) {
@@ -72,25 +73,13 @@ export async function executeRemoteCommand(options: RemoteCommandOptions): Promi
     });
   }
 
-  if (!options.apiBaseUrl) {
-    throw new CliError('Missing API base URL. Set TIANGONG_LCA_API_BASE_URL.', {
-      code: 'API_BASE_URL_REQUIRED',
-      exitCode: 2,
-    });
-  }
-
-  if (!options.apiKey) {
-    throw new CliError('Missing API key. Set TIANGONG_LCA_API_KEY.', {
-      code: 'API_KEY_REQUIRED',
-      exitCode: 2,
-    });
-  }
-
+  const runtimeEnv = readRuntimeEnv(options.env);
+  const runtime = requireSupabaseRestRuntime(options.env);
   const body = readJsonInput(options.inputPath);
-  const url = buildUrl(options.apiBaseUrl, spec.endpoint);
-  const headers = buildHeaders(options.apiKey, spec.includeRegion, options.region);
+  const url = buildUrl(runtime.apiBaseUrl, spec.endpoint);
 
   if (options.dryRun) {
+    const dryRunHeaders = buildHeaders('****', spec.includeRegion, runtimeEnv.region);
     return stringifyJson(
       {
         dryRun: true,
@@ -98,8 +87,7 @@ export async function executeRemoteCommand(options: RemoteCommandOptions): Promi
           method: 'POST',
           url,
           headers: {
-            ...headers,
-            Authorization: 'Bearer ****',
+            ...dryRunHeaders,
           },
           inputPath: options.inputPath,
           body,
@@ -110,6 +98,12 @@ export async function executeRemoteCommand(options: RemoteCommandOptions): Promi
     );
   }
 
+  const session = await resolveSupabaseUserSession({
+    runtime,
+    fetchImpl: options.fetchImpl,
+    timeoutMs: options.timeoutMs,
+  });
+  const headers = buildHeaders(session.accessToken, spec.includeRegion, runtimeEnv.region);
   const response = await postJson({
     url,
     headers,

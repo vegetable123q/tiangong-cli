@@ -7,6 +7,7 @@ import {
   normalizeTokenList,
 } from './flow-read.js';
 import { requireSupabaseRestRuntime } from './supabase-rest.js';
+import { createSupabaseDataRuntime } from './supabase-session.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -137,9 +138,14 @@ export async function runFlowList(options: RunFlowListOptions): Promise<FlowList
     });
   }
 
-  const runtime = requireSupabaseRestRuntime(options.env ?? process.env);
   const fetchImpl = options.fetchImpl ?? (fetch as FetchLike);
   const timeoutMs = options.timeoutMs ?? FLOW_LIST_TIMEOUT_MS;
+  const runtime = createSupabaseDataRuntime({
+    runtime: requireSupabaseRestRuntime(options.env ?? process.env),
+    fetchImpl,
+    timeoutMs,
+    now: options.now,
+  });
   const sourceUrls: string[] = [];
 
   const rows: FlowListReport['rows'] = [];

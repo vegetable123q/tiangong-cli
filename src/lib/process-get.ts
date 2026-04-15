@@ -6,6 +6,7 @@ import {
   requireSupabaseRestRuntime,
   type SupabaseProcessLookup,
 } from './supabase-rest.js';
+import { createSupabaseDataRuntime } from './supabase-session.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -57,13 +58,20 @@ export async function runProcessGet(options: RunProcessGetOptions): Promise<Proc
   }
 
   const requestedVersion = normalizeToken(options.version ?? null);
-  const runtime = requireSupabaseRestRuntime(options.env ?? process.env);
+  const fetchImpl = options.fetchImpl ?? (fetch as FetchLike);
+  const timeoutMs = options.timeoutMs ?? PROCESS_GET_TIMEOUT_MS;
+  const runtime = createSupabaseDataRuntime({
+    runtime: requireSupabaseRestRuntime(options.env ?? process.env),
+    fetchImpl,
+    timeoutMs,
+    now: options.now,
+  });
   const lookup = await fetchExactOrLatestProcessRow({
     runtime,
     id: processId,
     version: requestedVersion,
-    timeoutMs: options.timeoutMs ?? PROCESS_GET_TIMEOUT_MS,
-    fetchImpl: options.fetchImpl ?? (fetch as FetchLike),
+    timeoutMs,
+    fetchImpl,
     fallbackToLatest: requestedVersion !== null,
   });
 

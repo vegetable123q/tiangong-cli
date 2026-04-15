@@ -6,6 +6,7 @@ import {
   buildSupabaseAuthHeaders,
   createSupabaseDataClient,
   createSupabaseFetch,
+  deriveSupabaseFunctionsBaseUrl,
   deriveSupabaseProjectBaseUrl,
   deriveSupabaseRestBaseUrl,
   requireSupabaseRestRuntime,
@@ -36,10 +37,15 @@ test('requireSupabaseRestRuntime, URL derivation, and auth headers follow the sh
     requireSupabaseRestRuntime({
       TIANGONG_LCA_API_BASE_URL: ' https://example.supabase.co/functions/v1 ',
       TIANGONG_LCA_API_KEY: ' secret-token ',
+      TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY: ' sb-publishable-key ',
     } as NodeJS.ProcessEnv),
     {
       apiBaseUrl: 'https://example.supabase.co/functions/v1',
-      apiKey: 'secret-token',
+      userApiKey: 'secret-token',
+      publishableKey: 'sb-publishable-key',
+      sessionFile: null,
+      disableSessionCache: false,
+      forceReauth: false,
     },
   );
 
@@ -50,7 +56,11 @@ test('requireSupabaseRestRuntime, URL derivation, and auth headers follow the sh
       error.code === 'SUPABASE_REST_ENV_REQUIRED' &&
       JSON.stringify(error.details) ===
         JSON.stringify({
-          missing: ['TIANGONG_LCA_API_BASE_URL', 'TIANGONG_LCA_API_KEY'],
+          missing: [
+            'TIANGONG_LCA_API_BASE_URL',
+            'TIANGONG_LCA_API_KEY',
+            'TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY',
+          ],
         }),
   );
 
@@ -70,16 +80,74 @@ test('requireSupabaseRestRuntime, URL derivation, and auth headers follow the sh
     deriveSupabaseRestBaseUrl('https://example.supabase.co/functions/v1'),
     'https://example.supabase.co/rest/v1',
   );
+  assert.equal(
+    deriveSupabaseFunctionsBaseUrl('https://example.supabase.co/rest/v1'),
+    'https://example.supabase.co/functions/v1',
+  );
   assert.throws(
     () => deriveSupabaseProjectBaseUrl('https://example.supabase.co/unsupported/path'),
     (error) => error instanceof CliError && error.code === 'SUPABASE_REST_BASE_URL_INVALID',
   );
 
-  assert.deepEqual(buildSupabaseAuthHeaders('secret-token'), {
+  assert.deepEqual(buildSupabaseAuthHeaders('sb-publishable-key', 'access-token'), {
     Accept: 'application/json',
-    Authorization: 'Bearer secret-token',
-    apikey: 'secret-token',
+    Authorization: 'Bearer access-token',
+    apikey: 'sb-publishable-key',
   });
+
+  assert.deepEqual(
+    requireSupabaseRestRuntime({
+      TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/functions/v1',
+      TIANGONG_LCA_API_KEY: 'secret-token',
+      TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY: 'sb-publishable-key',
+      TIANGONG_LCA_DISABLE_SESSION_CACHE: '1',
+      TIANGONG_LCA_FORCE_REAUTH: 'yes',
+    } as NodeJS.ProcessEnv),
+    {
+      apiBaseUrl: 'https://example.supabase.co/functions/v1',
+      userApiKey: 'secret-token',
+      publishableKey: 'sb-publishable-key',
+      sessionFile: null,
+      disableSessionCache: true,
+      forceReauth: true,
+    },
+  );
+
+  assert.deepEqual(
+    requireSupabaseRestRuntime({
+      TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/functions/v1',
+      TIANGONG_LCA_API_KEY: 'secret-token',
+      TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY: 'sb-publishable-key',
+      TIANGONG_LCA_DISABLE_SESSION_CACHE: 'true',
+      TIANGONG_LCA_FORCE_REAUTH: 'on',
+    } as NodeJS.ProcessEnv),
+    {
+      apiBaseUrl: 'https://example.supabase.co/functions/v1',
+      userApiKey: 'secret-token',
+      publishableKey: 'sb-publishable-key',
+      sessionFile: null,
+      disableSessionCache: true,
+      forceReauth: true,
+    },
+  );
+
+  assert.deepEqual(
+    requireSupabaseRestRuntime({
+      TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/functions/v1',
+      TIANGONG_LCA_API_KEY: 'secret-token',
+      TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY: 'sb-publishable-key',
+      TIANGONG_LCA_DISABLE_SESSION_CACHE: 'off',
+      TIANGONG_LCA_FORCE_REAUTH: 'off',
+    } as NodeJS.ProcessEnv),
+    {
+      apiBaseUrl: 'https://example.supabase.co/functions/v1',
+      userApiKey: 'secret-token',
+      publishableKey: 'sb-publishable-key',
+      sessionFile: null,
+      disableSessionCache: false,
+      forceReauth: false,
+    },
+  );
 });
 
 test('createSupabaseFetch supports URL and Request input shapes and preserves native Responses', async () => {
@@ -165,6 +233,55 @@ test('createSupabaseFetch normalizes non-Error transport failures', async () => 
     async () => fetchWithError('https://example.supabase.co/rest/v1/flows'),
     (error) => error === transportError,
   );
+});
+
+test('createSupabaseFetch refreshes and retries once after an auth failure', async () => {
+  const observedAuthHeaders: string[] = [];
+  let fetchCount = 0;
+  const runtime = {
+    apiBaseUrl: 'https://example.supabase.co/functions/v1',
+    publishableKey: 'sb-publishable-key',
+    getAccessToken: async () => 'stale-access-token',
+    refreshAccessToken: async () => 'fresh-access-token',
+  };
+  const supabaseFetch = createSupabaseFetch(
+    (async (_url, init) => {
+      const headers = new Headers(init?.headers);
+      observedAuthHeaders.push(headers.get('authorization') ?? '');
+      fetchCount += 1;
+
+      if (fetchCount === 1) {
+        return {
+          ok: false,
+          status: 401,
+          headers: {
+            get: () => 'application/json',
+          },
+          text: async () => '',
+        };
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get: () => 'application/json',
+        },
+        text: async () => '{"ok":true}',
+      };
+    }) as FetchLike,
+    25,
+    runtime,
+  );
+
+  const response = await supabaseFetch('https://example.supabase.co/rest/v1/flows', {
+    headers: {
+      'x-test': '1',
+    },
+  });
+  assert.equal(fetchCount, 2);
+  assert.deepEqual(observedAuthHeaders, ['Bearer stale-access-token', 'Bearer fresh-access-token']);
+  assert.equal(await response.text(), '{"ok":true}');
 });
 
 test('runSupabaseQuery and runSupabaseArrayQuery cover success, null arrays, and wrapped failures', async () => {
@@ -427,11 +544,13 @@ test('runSupabaseMutation covers success, CliError passthrough, and wrapped fail
   );
 });
 
-test('createSupabaseDataClient returns a configured rest base URL', () => {
-  const { client, restBaseUrl } = createSupabaseDataClient(
+test('createSupabaseDataClient returns configured rest and functions base URLs', () => {
+  const { client, restBaseUrl, functionsBaseUrl } = createSupabaseDataClient(
     {
       apiBaseUrl: 'https://example.supabase.co/functions/v1',
-      apiKey: 'secret-token',
+      publishableKey: 'sb-publishable-key',
+      getAccessToken: async () => 'access-token',
+      refreshAccessToken: async () => 'refreshed-access-token',
     },
     (async () =>
       new Response('[]', {
@@ -445,4 +564,5 @@ test('createSupabaseDataClient returns a configured rest base URL', () => {
 
   assert.ok(client);
   assert.equal(restBaseUrl, 'https://example.supabase.co/rest/v1');
+  assert.equal(functionsBaseUrl, 'https://example.supabase.co/functions/v1');
 });

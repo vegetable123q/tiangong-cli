@@ -6,6 +6,7 @@ import {
   type SupabaseFlowLookup,
 } from './flow-read.js';
 import { requireSupabaseRestRuntime } from './supabase-rest.js';
+import { createSupabaseDataRuntime } from './supabase-session.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -68,15 +69,22 @@ export async function runFlowGet(options: RunFlowGetOptions): Promise<FlowGetRep
       ? (options.stateCode as number)
       : null;
 
-  const runtime = requireSupabaseRestRuntime(options.env ?? process.env);
+  const fetchImpl = options.fetchImpl ?? (fetch as FetchLike);
+  const timeoutMs = options.timeoutMs ?? FLOW_GET_TIMEOUT_MS;
+  const runtime = createSupabaseDataRuntime({
+    runtime: requireSupabaseRestRuntime(options.env ?? process.env),
+    fetchImpl,
+    timeoutMs,
+    now: options.now,
+  });
   const lookup = await fetchOneFlowRow({
     runtime,
     id: flowId,
     version: requestedVersion,
     userId: requestedUserId,
     stateCode: requestedStateCode,
-    timeoutMs: options.timeoutMs ?? FLOW_GET_TIMEOUT_MS,
-    fetchImpl: options.fetchImpl ?? (fetch as FetchLike),
+    timeoutMs,
+    fetchImpl,
     fallbackToLatest: requestedVersion !== null,
   });
 

@@ -1,11 +1,17 @@
 import { CliError } from './errors.js';
+import {
+  buildDatasetCommandTransport,
+  createDatasetRecord,
+  saveDraftDatasetRecord,
+  type DatasetCommandTransport,
+} from './dataset-command.js';
 import type { FetchLike } from './http.js';
 import {
   createSupabaseDataClient,
   requireSupabaseRestRuntime,
   runSupabaseArrayQuery,
-  runSupabaseMutation,
 } from './supabase-client.js';
+import { createSupabaseDataRuntime } from './supabase-session.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -111,45 +117,37 @@ async function exactVisibleRows(options: {
 }
 
 async function insertJsonOrderedRow(options: {
-  client: SupabaseDataClient;
-  restBaseUrl: string;
+  transport: DatasetCommandTransport;
   table: SupabaseJsonOrderedTable;
   id: string;
   payload: JsonObject;
   extraData?: JsonObject;
 }): Promise<void> {
-  const url = `${options.restBaseUrl.replace(/\/+$/u, '')}/${options.table}`;
-  await runSupabaseMutation(
-    options.client.from(options.table).insert({
-      id: options.id,
-      json_ordered: options.payload,
-      ...(options.extraData ?? {}),
-    }),
-    url,
-  );
+  await createDatasetRecord({
+    transport: options.transport,
+    table: options.table,
+    id: options.id,
+    payload: options.payload,
+    extraData: options.extraData,
+  });
 }
 
 async function updateJsonOrderedRow(options: {
-  client: SupabaseDataClient;
-  restBaseUrl: string;
+  transport: DatasetCommandTransport;
   table: SupabaseJsonOrderedTable;
   id: string;
   version: string;
   payload: JsonObject;
   extraData?: JsonObject;
 }): Promise<void> {
-  const url = buildUpdateUrl(options.restBaseUrl, options.table, options.id, options.version);
-  await runSupabaseMutation(
-    options.client
-      .from(options.table)
-      .update({
-        json_ordered: options.payload,
-        ...(options.extraData ?? {}),
-      })
-      .eq('id', options.id)
-      .eq('version', options.version),
-    url,
-  );
+  await saveDraftDatasetRecord({
+    transport: options.transport,
+    table: options.table,
+    id: options.id,
+    version: options.version,
+    payload: options.payload,
+    extraData: options.extraData,
+  });
 }
 
 function requireNonEmptyToken(value: string, label: string, code: string): string {
@@ -168,7 +166,11 @@ export function hasSupabaseRestRuntime(env: NodeJS.ProcessEnv | undefined): bool
     return false;
   }
 
-  return Boolean(trimToken(env.TIANGONG_LCA_API_BASE_URL) && trimToken(env.TIANGONG_LCA_API_KEY));
+  return Boolean(
+    trimToken(env.TIANGONG_LCA_API_BASE_URL) &&
+    trimToken(env.TIANGONG_LCA_API_KEY) &&
+    trimToken(env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY),
+  );
 }
 
 export async function syncSupabaseJsonOrderedRecord(options: {
@@ -188,12 +190,18 @@ export async function syncSupabaseJsonOrderedRecord(options: {
     'dataset version',
     'SUPABASE_JSON_ORDERED_VERSION_REQUIRED',
   );
-  const runtime = requireSupabaseRestRuntime(options.env);
-  const { client, restBaseUrl } = createSupabaseDataClient(
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const runtime = createSupabaseDataRuntime({
+    runtime: requireSupabaseRestRuntime(options.env),
+    fetchImpl: options.fetchImpl,
+    timeoutMs,
+  });
+  const commandTransport = await buildDatasetCommandTransport({
     runtime,
-    options.fetchImpl,
-    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-  );
+    fetchImpl: options.fetchImpl,
+    timeoutMs,
+  });
+  const { client, restBaseUrl } = createSupabaseDataClient(runtime, options.fetchImpl, timeoutMs);
 
   const visibleBefore = await exactVisibleRows({
     client,
@@ -212,8 +220,7 @@ export async function syncSupabaseJsonOrderedRecord(options: {
 
   if (visibleBefore.length > 0) {
     await updateJsonOrderedRow({
-      client,
-      restBaseUrl,
+      transport: commandTransport,
       table: options.table,
       id,
       version,
@@ -228,8 +235,7 @@ export async function syncSupabaseJsonOrderedRecord(options: {
 
   try {
     await insertJsonOrderedRow({
-      client,
-      restBaseUrl,
+      transport: commandTransport,
       table: options.table,
       id,
       payload: options.payload,
@@ -260,8 +266,7 @@ export async function syncSupabaseJsonOrderedRecord(options: {
     }
 
     await updateJsonOrderedRow({
-      client,
-      restBaseUrl,
+      transport: commandTransport,
       table: options.table,
       id,
       version,

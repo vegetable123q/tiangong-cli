@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildDoctorReport, maskSecret, readRuntimeEnv, resolveEnv } from '../src/lib/env.js';
+import {
+  __testInternals,
+  buildDoctorReport,
+  maskSecret,
+  readRuntimeEnv,
+  resolveEnv,
+} from '../src/lib/env.js';
 
 test('resolveEnv prefers a present env key', () => {
   const resolved = resolveEnv(
@@ -50,12 +56,17 @@ test('readRuntimeEnv returns the canonical TianGong LCA runtime config', () => {
   const runtime = readRuntimeEnv({
     TIANGONG_LCA_API_BASE_URL: 'https://example.com/functions/v1',
     TIANGONG_LCA_API_KEY: 'secret-token',
+    TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY: 'sb-publishable-key',
   });
 
   assert.deepEqual(runtime, {
     apiBaseUrl: 'https://example.com/functions/v1',
     apiKey: 'secret-token',
     region: 'us-east-1',
+    supabasePublishableKey: 'sb-publishable-key',
+    sessionFile: null,
+    disableSessionCache: false,
+    forceReauth: false,
   });
 });
 
@@ -65,16 +76,30 @@ test('maskSecret leaves short values unchanged and masks longer values', () => {
   assert.equal(maskSecret('1234567890'), '1234...7890');
 });
 
+test('env boolean helpers normalize true-ish values and null fallbacks', () => {
+  assert.equal(__testInternals.parseBooleanEnv(null), false);
+  assert.equal(__testInternals.parseBooleanEnv('1'), true);
+  assert.equal(__testInternals.parseBooleanEnv('true'), true);
+  assert.equal(__testInternals.parseBooleanEnv('yes'), true);
+  assert.equal(__testInternals.parseBooleanEnv('on'), true);
+  assert.equal(__testInternals.parseBooleanEnv('no'), false);
+});
+
 test('buildDoctorReport records canonical TianGong LCA env keys', () => {
   const report = buildDoctorReport(
     {
       TIANGONG_LCA_API_BASE_URL: 'https://example.com',
       TIANGONG_LCA_API_KEY: 'secret-token',
+      TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY: 'sb-publishable-key',
     },
-    { loaded: true, path: '/tmp/.env', count: 2 },
+    { loaded: true, path: '/tmp/.env', count: 3 },
   );
 
   assert.equal(report.ok, true);
   const apiKeyCheck = report.checks.find((check) => check.key === 'TIANGONG_LCA_API_KEY');
   assert.equal(apiKeyCheck?.source, 'env');
+  const publishableCheck = report.checks.find(
+    (check) => check.key === 'TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY',
+  );
+  assert.equal(publishableCheck?.source, 'env');
 });

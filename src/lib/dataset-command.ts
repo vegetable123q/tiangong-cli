@@ -1,0 +1,221 @@
+import { CliError } from './errors.js';
+import type { FetchLike } from './http.js';
+import { postJson, requireRemoteOkPayload } from './http.js';
+import {
+  buildSupabaseAuthHeaders,
+  deriveSupabaseProjectBaseUrl,
+  requireSupabaseRestRuntime,
+  type SupabaseDataRuntime,
+} from './supabase-client.js';
+import { createSupabaseDataRuntime } from './supabase-session.js';
+
+type JsonObject = Record<string, unknown>;
+
+export type DatasetCommandTable =
+  | 'contacts'
+  | 'sources'
+  | 'unitgroups'
+  | 'flowproperties'
+  | 'flows'
+  | 'processes'
+  | 'lifecyclemodels';
+
+export type DatasetCommandTransport = {
+  functionsBaseUrl: string;
+  publishableKey: string;
+  accessToken: string;
+  fetchImpl: FetchLike;
+  timeoutMs: number;
+};
+
+function isRecord(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function trimToken(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function readOptionalRuleVerification(extraData?: JsonObject): boolean | null | undefined {
+  if (!extraData) {
+    return undefined;
+  }
+
+  if ('ruleVerification' in extraData) {
+    const value = extraData.ruleVerification;
+    if (typeof value === 'boolean' || value === null) {
+      return value;
+    }
+    return undefined;
+  }
+
+  if ('rule_verification' in extraData) {
+    const value = extraData.rule_verification;
+    if (typeof value === 'boolean' || value === null) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function readOptionalModelId(
+  extraData: JsonObject | undefined,
+  allowNull: boolean,
+): string | null | undefined {
+  if (!extraData) {
+    return undefined;
+  }
+
+  const value = extraData.modelId ?? extraData.model_id;
+  const trimmed = trimToken(value);
+  if (trimmed) {
+    return trimmed;
+  }
+
+  if (allowNull && value === null) {
+    return null;
+  }
+
+  return undefined;
+}
+
+function requireCommandSuccessPayload(payload: unknown, url: string): JsonObject {
+  const normalized = requireRemoteOkPayload(payload, url);
+  if (!isRecord(normalized) || normalized.ok !== true) {
+    throw new CliError(`Dataset command returned an unexpected payload for ${url}`, {
+      code: 'REMOTE_RESPONSE_INVALID',
+      exitCode: 1,
+      details: normalized,
+    });
+  }
+
+  return normalized;
+}
+
+async function invokeDatasetCommand(options: {
+  transport: DatasetCommandTransport;
+  commandName: 'app_dataset_create' | 'app_dataset_save_draft';
+  body: JsonObject;
+}): Promise<JsonObject> {
+  const url = `${options.transport.functionsBaseUrl}/${options.commandName}`;
+  return requireCommandSuccessPayload(
+    await postJson({
+      url,
+      headers: {
+        ...buildSupabaseAuthHeaders(
+          options.transport.publishableKey,
+          options.transport.accessToken,
+        ),
+        'Content-Type': 'application/json',
+      },
+      body: options.body,
+      timeoutMs: options.transport.timeoutMs,
+      fetchImpl: options.transport.fetchImpl,
+    }),
+    url,
+  );
+}
+
+export function deriveSupabaseFunctionsBaseUrl(apiBaseUrl: string): string {
+  return `${deriveSupabaseProjectBaseUrl(apiBaseUrl)}/functions/v1`;
+}
+
+export async function buildDatasetCommandTransport(options: {
+  runtime: SupabaseDataRuntime;
+  fetchImpl: FetchLike;
+  timeoutMs: number;
+}): Promise<DatasetCommandTransport> {
+  return {
+    functionsBaseUrl: deriveSupabaseFunctionsBaseUrl(options.runtime.apiBaseUrl),
+    publishableKey: options.runtime.publishableKey,
+    accessToken: await options.runtime.getAccessToken(),
+    fetchImpl: options.fetchImpl,
+    timeoutMs: options.timeoutMs,
+  };
+}
+
+export async function resolveDatasetCommandTransport(options: {
+  env: NodeJS.ProcessEnv;
+  fetchImpl: FetchLike;
+  timeoutMs: number;
+}): Promise<DatasetCommandTransport> {
+  return buildDatasetCommandTransport({
+    runtime: createSupabaseDataRuntime({
+      runtime: requireSupabaseRestRuntime(options.env),
+      fetchImpl: options.fetchImpl,
+      timeoutMs: options.timeoutMs,
+    }),
+    fetchImpl: options.fetchImpl,
+    timeoutMs: options.timeoutMs,
+  });
+}
+
+export async function createDatasetRecord(options: {
+  transport: DatasetCommandTransport;
+  table: DatasetCommandTable;
+  id: string;
+  payload: JsonObject;
+  extraData?: JsonObject;
+}): Promise<JsonObject> {
+  const body: JsonObject = {
+    table: options.table,
+    id: options.id,
+    jsonOrdered: options.payload,
+  };
+  const modelId = readOptionalModelId(options.extraData, true);
+  if (modelId !== undefined) {
+    body.modelId = modelId;
+  }
+  const ruleVerification = readOptionalRuleVerification(options.extraData);
+  if (ruleVerification !== undefined) {
+    body.ruleVerification = ruleVerification;
+  }
+
+  return invokeDatasetCommand({
+    transport: options.transport,
+    commandName: 'app_dataset_create',
+    body,
+  });
+}
+
+export async function saveDraftDatasetRecord(options: {
+  transport: DatasetCommandTransport;
+  table: DatasetCommandTable;
+  id: string;
+  version: string;
+  payload: JsonObject;
+  extraData?: JsonObject;
+}): Promise<JsonObject> {
+  const body: JsonObject = {
+    table: options.table,
+    id: options.id,
+    version: options.version,
+    jsonOrdered: options.payload,
+  };
+  const modelId = readOptionalModelId(options.extraData, false);
+  if (modelId !== undefined) {
+    body.modelId = modelId;
+  }
+  const ruleVerification = readOptionalRuleVerification(options.extraData);
+  if (ruleVerification !== undefined) {
+    body.ruleVerification = ruleVerification;
+  }
+
+  return invokeDatasetCommand({
+    transport: options.transport,
+    commandName: 'app_dataset_save_draft',
+    body,
+  });
+}
+
+export const __testInternals = {
+  deriveSupabaseFunctionsBaseUrl,
+  readOptionalModelId,
+  readOptionalRuleVerification,
+};

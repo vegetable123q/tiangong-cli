@@ -3,10 +3,19 @@ import assert from 'node:assert/strict';
 import { CliError } from '../src/lib/errors.js';
 import type { FetchLike } from '../src/lib/http.js';
 import { __testInternals, runFlowGet } from '../src/lib/flow-get.js';
+import {
+  buildSupabaseTestEnv,
+  isSupabaseAuthTokenUrl,
+  makeSupabaseAuthResponse,
+} from './helpers/supabase-auth.js';
 
 function jsonFetch(responses: unknown[], observedUrls: string[] = []): FetchLike {
   let index = 0;
   return (async (input) => {
+    if (isSupabaseAuthTokenUrl(String(input))) {
+      return makeSupabaseAuthResponse();
+    }
+
     observedUrls.push(String(input));
     const next = responses[Math.min(index, responses.length - 1)];
     index += 1;
@@ -30,10 +39,9 @@ test('runFlowGet resolves the exact requested flow version', async () => {
     stateCode: 100,
     timeoutMs: 99,
     now: new Date('2026-03-30T00:00:00.000Z'),
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/functions/v1',
-      TIANGONG_LCA_API_KEY: 'secret-token',
-    } as NodeJS.ProcessEnv,
+    }),
     fetchImpl: jsonFetch(
       [
         [
@@ -75,27 +83,41 @@ test('runFlowGet can fall back to process.env and global fetch', async () => {
   const originalFetch = globalThis.fetch;
   const originalBaseUrl = process.env.TIANGONG_LCA_API_BASE_URL;
   const originalApiKey = process.env.TIANGONG_LCA_API_KEY;
+  const originalPublishableKey = process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+  const originalSessionMemoryOnly = process.env.TIANGONG_LCA_SESSION_MEMORY_ONLY;
+  const testEnv = buildSupabaseTestEnv({
+    TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
+    TIANGONG_LCA_API_KEY: 'secret-token',
+  });
 
-  process.env.TIANGONG_LCA_API_BASE_URL = 'https://example.supabase.co';
-  process.env.TIANGONG_LCA_API_KEY = 'secret-token';
-  globalThis.fetch = (async () => ({
-    ok: true,
-    status: 200,
-    headers: {
-      get: () => 'application/json',
-    },
-    text: async () =>
-      JSON.stringify([
-        {
-          id: '',
-          version: '',
-          user_id: null,
-          state_code: null,
-          modified_at: null,
-          json: { flowDataSet: { id: 'flow-2', latest: true } },
-        },
-      ]),
-  })) as unknown as typeof fetch;
+  process.env.TIANGONG_LCA_API_BASE_URL = testEnv.TIANGONG_LCA_API_BASE_URL;
+  process.env.TIANGONG_LCA_API_KEY = testEnv.TIANGONG_LCA_API_KEY;
+  process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY = testEnv.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+  process.env.TIANGONG_LCA_SESSION_MEMORY_ONLY = testEnv.TIANGONG_LCA_SESSION_MEMORY_ONLY;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    if (isSupabaseAuthTokenUrl(String(input))) {
+      return makeSupabaseAuthResponse();
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get: () => 'application/json',
+      },
+      text: async () =>
+        JSON.stringify([
+          {
+            id: '',
+            version: '',
+            user_id: null,
+            state_code: null,
+            modified_at: null,
+            json: { flowDataSet: { id: 'flow-2', latest: true } },
+          },
+        ]),
+    };
+  }) as unknown as typeof fetch;
 
   try {
     const report = await runFlowGet({
@@ -118,6 +140,16 @@ test('runFlowGet can fall back to process.env and global fetch', async () => {
     } else {
       process.env.TIANGONG_LCA_API_KEY = originalApiKey;
     }
+    if (originalPublishableKey === undefined) {
+      delete process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY;
+    } else {
+      process.env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY = originalPublishableKey;
+    }
+    if (originalSessionMemoryOnly === undefined) {
+      delete process.env.TIANGONG_LCA_SESSION_MEMORY_ONLY;
+    } else {
+      process.env.TIANGONG_LCA_SESSION_MEMORY_ONLY = originalSessionMemoryOnly;
+    }
   }
 });
 
@@ -126,10 +158,9 @@ test('runFlowGet falls back to the latest reachable version when exact lookup mi
   const report = await runFlowGet({
     flowId: 'flow-1',
     version: '01.00.001',
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/rest/v1',
-      TIANGONG_LCA_API_KEY: 'secret-token',
-    } as NodeJS.ProcessEnv,
+    }),
     fetchImpl: jsonFetch(
       [
         [],
@@ -164,10 +195,9 @@ test('runFlowGet falls back to the latest reachable version when exact lookup mi
 test('runFlowGet loads the latest row when no version is requested', async () => {
   const report = await runFlowGet({
     flowId: 'flow-1',
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
-      TIANGONG_LCA_API_KEY: 'secret-token',
-    } as NodeJS.ProcessEnv,
+    }),
     fetchImpl: jsonFetch([
       [
         {
@@ -192,10 +222,9 @@ test('runFlowGet rejects missing flow identifiers', async () => {
     () =>
       runFlowGet({
         flowId: '   ',
-        env: {
+        env: buildSupabaseTestEnv({
           TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
-          TIANGONG_LCA_API_KEY: 'secret-token',
-        } as NodeJS.ProcessEnv,
+        }),
         fetchImpl: jsonFetch([[]]),
       }),
     (error) => error instanceof CliError && error.code === 'FLOW_ID_REQUIRED',
@@ -208,10 +237,9 @@ test('runFlowGet rejects missing flows after fallback', async () => {
       runFlowGet({
         flowId: 'flow-missing',
         version: '01.00.001',
-        env: {
+        env: buildSupabaseTestEnv({
           TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
-          TIANGONG_LCA_API_KEY: 'secret-token',
-        } as NodeJS.ProcessEnv,
+        }),
         fetchImpl: jsonFetch([[], []]),
       }),
     (error) => error instanceof CliError && error.code === 'FLOW_GET_NOT_FOUND',
@@ -223,10 +251,9 @@ test('runFlowGet rejects missing flows when only the latest lookup is requested'
     () =>
       runFlowGet({
         flowId: 'flow-missing',
-        env: {
+        env: buildSupabaseTestEnv({
           TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
-          TIANGONG_LCA_API_KEY: 'secret-token',
-        } as NodeJS.ProcessEnv,
+        }),
         fetchImpl: jsonFetch([[]]),
       }),
     (error) => error instanceof CliError && error.code === 'FLOW_GET_NOT_FOUND',
@@ -239,10 +266,9 @@ test('runFlowGet rejects ambiguous exact matches', async () => {
       runFlowGet({
         flowId: 'flow-1',
         version: '01.00.001',
-        env: {
+        env: buildSupabaseTestEnv({
           TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
-          TIANGONG_LCA_API_KEY: 'secret-token',
-        } as NodeJS.ProcessEnv,
+        }),
         fetchImpl: jsonFetch([
           [
             {
@@ -273,10 +299,9 @@ test('runFlowGet rejects ambiguous latest matches', async () => {
     () =>
       runFlowGet({
         flowId: 'flow-1',
-        env: {
+        env: buildSupabaseTestEnv({
           TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
-          TIANGONG_LCA_API_KEY: 'secret-token',
-        } as NodeJS.ProcessEnv,
+        }),
         fetchImpl: jsonFetch([
           [
             {

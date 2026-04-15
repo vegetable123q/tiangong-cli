@@ -4,13 +4,29 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { CliError } from '../src/lib/errors.js';
+import type { FetchLike } from '../src/lib/http.js';
 import type { FlowPublishVersionReport } from '../src/lib/flow-publish-version.js';
 import {
   __testInternals,
   runFlowReviewedPublishData,
 } from '../src/lib/flow-publish-reviewed-data.js';
+import {
+  buildSupabaseTestEnv,
+  isSupabaseAuthTokenUrl,
+  makeSupabaseAuthResponse,
+} from './helpers/supabase-auth.js';
 
 type JsonRecord = Record<string, unknown>;
+
+function withSupabaseAuth(fetchImpl: FetchLike): FetchLike {
+  return (async (input, init) => {
+    if (isSupabaseAuthTokenUrl(String(input))) {
+      return makeSupabaseAuthResponse();
+    }
+
+    return fetchImpl(input, init);
+  }) as FetchLike;
+}
 
 function writeJson(filePath: string, value: unknown): void {
   mkdirSync(path.dirname(filePath), { recursive: true });
@@ -550,11 +566,11 @@ test('flow publish reviewed data process helpers unwrap root payloads and map up
       },
     ],
     maxWorkers: 1,
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
       TIANGONG_LCA_API_KEY: 'key',
-    } as NodeJS.ProcessEnv,
-    fetchImpl: async (url, init) => {
+    }),
+    fetchImpl: withSupabaseAuth(async (url, init) => {
       const method = String(init?.method ?? 'GET');
       const requestUrl = String(url);
       if (method === 'GET' && requestUrl.includes('id=eq.proc-updated')) {
@@ -581,10 +597,10 @@ test('flow publish reviewed data process helpers unwrap root payloads and map up
           },
         },
         async text() {
-          return '[{"id":"proc-updated"}]';
+          return '{"ok":true,"command":"dataset_save_draft","data":{"id":"proc-updated"}}';
         },
       };
-    },
+    }),
   });
   assert.deepEqual(updateReports, [
     {
@@ -614,11 +630,11 @@ test('flow publish reviewed data process helpers unwrap root payloads and map up
       },
     ],
     maxWorkers: 1,
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
       TIANGONG_LCA_API_KEY: 'key',
-    } as NodeJS.ProcessEnv,
-    fetchImpl: async (url, init) => {
+    }),
+    fetchImpl: withSupabaseAuth(async (url, init) => {
       const method = String(init?.method ?? 'GET');
       const requestUrl = String(url);
       if (method === 'GET' && requestUrl.includes('id=eq.proc-failed')) {
@@ -648,7 +664,7 @@ test('flow publish reviewed data process helpers unwrap root payloads and map up
           return '{"message":"duplicate"}';
         },
       };
-    },
+    }),
   });
   assert.deepEqual(failedReports, [
     {
@@ -660,7 +676,7 @@ test('flow publish reviewed data process helpers unwrap root payloads and map up
       publish_policy: 'upsert_current_version',
       version_strategy: 'keep_current',
       status: 'failed',
-      error: 'HTTP 409 returned from https://example.supabase.co/rest/v1/processes',
+      error: '{"message":"duplicate"}',
     },
   ]);
 
@@ -678,13 +694,13 @@ test('flow publish reviewed data process helpers unwrap root payloads and map up
       },
     ],
     maxWorkers: 1,
-    env: {
+    env: buildSupabaseTestEnv({
       TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
       TIANGONG_LCA_API_KEY: 'key',
-    } as NodeJS.ProcessEnv,
-    fetchImpl: async () => {
+    }),
+    fetchImpl: withSupabaseAuth(async () => {
       throw 'boom-string';
-    },
+    }),
   });
   assert.deepEqual(stringErrorReports, [
     {
@@ -709,7 +725,7 @@ test('runFlowReviewedPublishData can use the default flow publish-version implem
 
   writeJsonl(flowRowsFile, [makeFlowRow({ id: 'flow-default', version: '01.00.001' })]);
 
-  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+  const fetchImpl = withSupabaseAuth(async (input: string | URL | Request, init?: RequestInit) => {
     observed.push({
       url: String(input),
       method: String(init?.method ?? ''),
@@ -729,13 +745,13 @@ test('runFlowReviewedPublishData can use the default flow publish-version implem
 
     return {
       ok: true,
-      status: 201,
+      status: 200,
       headers: {
         get: () => 'application/json',
       },
-      text: async () => '',
+      text: async () => '{"ok":true,"command":"dataset_create","data":{"id":"flow-default"}}',
     };
-  }) as unknown as typeof fetch;
+  }) as unknown as FetchLike;
 
   try {
     const report = await runFlowReviewedPublishData({
@@ -743,11 +759,11 @@ test('runFlowReviewedPublishData can use the default flow publish-version implem
       outDir,
       flowPublishPolicy: 'append_only_bump',
       commit: true,
-      env: {
+      env: buildSupabaseTestEnv({
         TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co/functions/v1',
         TIANGONG_LCA_API_KEY: 'secret-token',
-      } as NodeJS.ProcessEnv,
-      fetchImpl,
+      }),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
     assert.equal(report.status, 'completed_flow_publish_reviewed_data');
@@ -873,7 +889,7 @@ test('runFlowReviewedPublishData prepares process rows locally, rewrites flow re
   }
 });
 
-test('runFlowReviewedPublishData commits prepared process rows through Supabase REST when process publish is requested', async () => {
+test('runFlowReviewedPublishData commits prepared process rows through dataset commands when process publish is requested', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-flow-publish-reviewed-process-commit-'));
   const processRowsFile = path.join(dir, 'reviewed-processes.json');
   const outDir = path.join(dir, 'publish-reviewed');
@@ -886,11 +902,11 @@ test('runFlowReviewedPublishData commits prepared process rows through Supabase 
       processRowsFile,
       outDir,
       commit: true,
-      env: {
+      env: buildSupabaseTestEnv({
         TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
         TIANGONG_LCA_API_KEY: 'key',
-      } as NodeJS.ProcessEnv,
-      fetchImpl: async (url, init) => {
+      }),
+      fetchImpl: withSupabaseAuth(async (url, init) => {
         observed.push({
           method: String(init?.method ?? 'GET'),
           url: String(url),
@@ -914,17 +930,17 @@ test('runFlowReviewedPublishData commits prepared process rows through Supabase 
 
         return {
           ok: true,
-          status: 201,
+          status: 200,
           headers: {
             get() {
               return 'application/json';
             },
           },
           async text() {
-            return '[{"id":"process-commit"}]';
+            return '{"ok":true,"command":"dataset_create","data":{"id":"process-commit"}}';
           },
         };
-      },
+      }),
     });
 
     assert.equal(report.status, 'completed_flow_publish_reviewed_data');
@@ -936,7 +952,8 @@ test('runFlowReviewedPublishData commits prepared process rows through Supabase 
       observed.map((entry) => entry.method),
       ['GET', 'POST'],
     );
-    assert.match(observed[1]?.body ?? '', /"json_ordered"/u);
+    assert.match(observed[1]?.url ?? '', /\/functions\/v1\/app_dataset_create$/u);
+    assert.match(observed[1]?.body ?? '', /"jsonOrdered"/u);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1536,11 +1553,11 @@ test('flow publish-reviewed-data helper internals cover validation, compatibilit
         },
       ],
       maxWorkers: 1,
-      env: {
+      env: buildSupabaseTestEnv({
         TIANGONG_LCA_API_BASE_URL: 'https://example.supabase.co',
         TIANGONG_LCA_API_KEY: 'key',
-      } as NodeJS.ProcessEnv,
-      fetchImpl: async (url, init) => {
+      }),
+      fetchImpl: withSupabaseAuth(async (url, init) => {
         const method = String(init?.method ?? 'GET');
         if (method === 'GET') {
           return {
@@ -1559,17 +1576,17 @@ test('flow publish-reviewed-data helper internals cover validation, compatibilit
 
         return {
           ok: true,
-          status: 201,
+          status: 200,
           headers: {
             get() {
               return 'application/json';
             },
           },
           async text() {
-            return '[{"id":"proc-commit-plan"}]';
+            return '{"ok":true,"command":"dataset_create","data":{"id":"proc-commit-plan"}}';
           },
         };
-      },
+      }),
     });
     assert.equal(commitPlans[0]?.status, 'inserted');
 

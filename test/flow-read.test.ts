@@ -14,7 +14,7 @@ import {
   parseFlowRows,
 } from '../src/lib/flow-read.js';
 import type { FetchLike } from '../src/lib/http.js';
-import type { SupabaseRestRuntime } from '../src/lib/supabase-rest.js';
+import type { SupabaseDataRuntime } from '../src/lib/supabase-rest.js';
 
 function jsonFetch(responses: unknown[], observedUrls: string[] = []): FetchLike {
   let index = 0;
@@ -33,9 +33,11 @@ function jsonFetch(responses: unknown[], observedUrls: string[] = []): FetchLike
   }) as FetchLike;
 }
 
-const runtime: SupabaseRestRuntime = {
+const runtime: SupabaseDataRuntime = {
   apiBaseUrl: 'https://example.supabase.co/functions/v1',
-  apiKey: 'secret-token',
+  publishableKey: 'sb-publishable-key',
+  getAccessToken: async () => 'access-token',
+  refreshAccessToken: async () => 'refreshed-access-token',
 };
 
 test('buildFlowListUrl encodes deterministic flow filters', () => {
@@ -84,10 +86,10 @@ test('buildFlowListUrl encodes deterministic flow filters', () => {
 });
 
 test('buildHeaders returns Supabase auth headers', () => {
-  assert.deepEqual(buildHeaders('secret-token'), {
+  assert.deepEqual(buildHeaders('sb-publishable-key', 'access-token'), {
     Accept: 'application/json',
-    Authorization: 'Bearer secret-token',
-    apikey: 'secret-token',
+    Authorization: 'Bearer access-token',
+    apikey: 'sb-publishable-key',
   });
 });
 

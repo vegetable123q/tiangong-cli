@@ -25,6 +25,7 @@
 - `tiangong search process`
 - `tiangong search lifecyclemodel`
 - `tiangong process get`
+- `tiangong process list`
 - `tiangong process auto-build`
 - `tiangong process resume-build`
 - `tiangong process publish-build`
@@ -66,6 +67,27 @@ npm ci
 npm run build
 ```
 
+## 发布流程
+
+这个仓库对外公开发布的 npm 包名是 `@tiangong-lca/cli`。
+
+日常 release 采用 tag 驱动的 GitHub Actions 流程：
+
+- 从 `main` 开一个 release-prep PR
+- 只修改 CLI 包自己的 `package.json` 版本号
+- PR 合并后，`.github/workflows/tag-release-from-merge.yml` 自动创建 `cli-vX.Y.Z`
+- `.github/workflows/publish.yml` 再从这个不可变 tag 通过 npm Trusted Publishing 发布
+
+值班发布步骤见 [docs/release-runbook.md](./docs/release-runbook.md)。
+
+一次性的仓库 secret、workflow 文件名和 npm Trusted Publisher 配置见 [docs/release-setup.md](./docs/release-setup.md)。
+
+发布到 npm 之后，可直接安装：
+
+```bash
+npm install --global @tiangong-lca/cli
+```
+
 ## 配置文件
 
 本项目会自动加载仓库根目录下的 `.env` 文件。
@@ -78,7 +100,13 @@ npm run build
 TIANGONG_LCA_API_BASE_URL=
 TIANGONG_LCA_API_KEY=
 TIANGONG_LCA_REGION=us-east-1
+TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY=
+TIANGONG_LCA_SESSION_FILE=
+TIANGONG_LCA_DISABLE_SESSION_CACHE=false
+TIANGONG_LCA_FORCE_REAUTH=false
 ```
+
+`TIANGONG_LCA_API_KEY` 是账户页生成的 TianGong 用户 API Key，不是 Supabase project key。CLI 只把它当作 bootstrap 凭证，配合 `TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` 在本地换取用户 session，然后统一用解析出的 access token 访问 Edge Functions 和 direct Supabase。
 
 此外，只有在显式启用 `tiangong review process --enable-llm` 或 `tiangong review flow --enable-llm` 时，才会额外使用这一组可选变量。这一整组配置默认都是 optional；只有打开 review LLM 模式时才需要填写。`TIANGONG_LCA_REVIEW_LLM_BASE_URL` 应指向一个 OpenAI-compatible Responses API 根地址，CLI 会向 `<base_url>/responses` 发请求：
 
@@ -103,7 +131,7 @@ TIANGONG_LCA_UNSTRUCTURED_CHUNK_TYPE=false
 TIANGONG_LCA_UNSTRUCTURED_RETURN_TXT=true
 ```
 
-当前也不需要额外配置 `SUPABASE_URL`、`SUPABASE_KEY` 或 `TIANGONG_LCA_TIDAS_SDK_DIR`。CLI 会从 `TIANGONG_LCA_API_*` 派生原生 `@supabase/supabase-js` client，并直接从 `package.json` 依赖加载 `@tiangong-lca/tidas-sdk`。
+当前也不需要额外配置通用的 `SUPABASE_URL`、`SUPABASE_KEY` 或 `TIANGONG_LCA_TIDAS_SDK_DIR`。CLI 会从 `TIANGONG_LCA_API_BASE_URL` 派生原生 `@supabase/supabase-js` client，用 `TIANGONG_LCA_API_KEY + TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` 换取用户 session，并直接从 `package.json` 依赖加载 `@tiangong-lca/tidas-sdk`。
 
 不再兼容旧变量名，也不再把 KB、TianGong unstructured service、MCP 相关 env 混写成当前公开命令面的必需配置。
 
@@ -120,21 +148,21 @@ TIANGONG_LCA_UNSTRUCTURED_RETURN_TXT=true
 | 命令组 | 必需 env |
 | --- | --- | --- | --- | --- |
 | `doctor` | 无 |
-| `search flow | process | lifecyclemodel` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`（`TIANGONG_LCA_REGION` 可选） |
-| `admin embedding-run` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`（`TIANGONG_LCA_REGION` 可选） |
-| `process get` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
+| `search flow | process | lifecyclemodel` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY`（`TIANGONG_LCA_REGION` 可选） |
+| `admin embedding-run` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY`（`TIANGONG_LCA_REGION` 可选） |
+| `process get | list` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
 | `process auto-build | resume-build | publish-build | batch-build` | 无 |
 | `lifecyclemodel auto-build | validate-build | publish-build | orchestrate` | 无 |
-| `lifecyclemodel build-resulting-process` | 本地运行默认无；若 request 打开 `process_sources.allow_remote_lookup=true`，则需要 `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
+| `lifecyclemodel build-resulting-process` | 本地运行默认无；若 request 打开 `process_sources.allow_remote_lookup=true`，则需要 `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
 | `lifecyclemodel publish-resulting-process` | 无 |
 | `review process` | 纯规则 review 默认无；若显式启用 `--enable-llm`，则需要 `TIANGONG_LCA_REVIEW_LLM_BASE_URL`、`TIANGONG_LCA_REVIEW_LLM_API_KEY`、`TIANGONG_LCA_REVIEW_LLM_MODEL` |
 | `review flow` | 纯规则 review 默认无；若显式启用 `--enable-llm`，则需要 `TIANGONG_LCA_REVIEW_LLM_BASE_URL`、`TIANGONG_LCA_REVIEW_LLM_API_KEY`、`TIANGONG_LCA_REVIEW_LLM_MODEL` |
 | `review lifecyclemodel` | 无 |
-| `flow get` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
-| `flow list` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
+| `flow get` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
+| `flow list` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
 | `flow remediate` | 无 |
-| `flow publish-version` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
-| `flow publish-reviewed-data` | 本地 dry-run 默认无；若 `--commit` 发布 prepared flow/process rows，则需要 `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY` |
+| `flow publish-version` | `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
+| `flow publish-reviewed-data` | 本地 dry-run 默认无；若 `--commit` 发布 prepared flow/process rows，则需要 `TIANGONG_LCA_API_BASE_URL`、`TIANGONG_LCA_API_KEY`、`TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY` |
 | `flow build-alias-map` | 无 |
 | `flow scan-process-flow-refs` | 无 |
 | `flow plan-process-flow-repairs` | 无 |
@@ -160,6 +188,7 @@ npm exec tiangong -- doctor
 npm exec tiangong -- doctor --json
 npm exec tiangong -- search flow --input ./request.json --dry-run
 npm exec tiangong -- process get --id <process-id> --version <version> --json
+npm exec tiangong -- process list --state-code 100 --limit 20 --json
 npm exec tiangong -- process auto-build --input ./examples/process-auto-build.request.json --out-dir /abs/path/to/process-run --json
 npm exec tiangong -- process resume-build --run-dir /abs/path/to/process-run --json
 npm exec tiangong -- process publish-build --run-dir /abs/path/to/process-run --json
@@ -170,6 +199,7 @@ npm exec tiangong -- lifecyclemodel publish-build --run-dir /abs/path/to/lifecyc
 npm exec tiangong -- lifecyclemodel orchestrate plan --input ./lifecyclemodel-orchestrate.request.json --out-dir /abs/path/to/lifecyclemodel-recursive-run --json
 npm exec tiangong -- lifecyclemodel build-resulting-process --input ./request.json --json
 npm exec tiangong -- lifecyclemodel publish-resulting-process --run-dir ./runs/example --publish-processes --publish-relations --json
+npm exec tiangong -- review process --rows-file ./process-list-report.json --out-dir ./review --json
 npm exec tiangong -- review process --run-root /abs/path/to/process-run --run-id <run_id> --out-dir ./review --json
 npm exec tiangong -- review flow --rows-file ./flows.json --out-dir ./flow-review --json
 npm exec tiangong -- review lifecyclemodel --run-dir /abs/path/to/lifecyclemodel-run --out-dir ./lifecyclemodel-review --json
@@ -394,8 +424,8 @@ npm exec tiangong -- admin embedding-run --input ./jobs.json --dry-run
 `tiangong flow publish-version` 现在已经承担 flow governance 的第一个 CLI 远端写入切片，负责：
 
 - 读取单个 ready-for-publish flow JSON / JSONL 输入
-- 从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase `/rest/v1/flows` 路径
-- 在 dry-run 或 commit 模式下决定 `insert` / `update_existing` / failure
+- 从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase REST 预检路径与 Edge Function dataset command 路径；支持 project root、`/functions/v1`、`/rest/v1` 三种 base URL 形态
+- dry-run 通过精确版本可见性预检决定 `would_insert` / `would_update_existing` / failure；commit 则在同一条预检链上调用 `app_dataset_create` / `app_dataset_save_draft`
 - 输出历史兼容的 `mcp_success_list`、`remote_validation_failed`、`mcp_sync_report`
 
 这个命令当前只负责 remediated flow version 的 publish/update 契约，不负责 round2 失败再修复；后续产品侧再生已经由 `tiangong flow regen-product` 单独承接。
@@ -413,7 +443,7 @@ npm exec tiangong -- admin embedding-run --input ./jobs.json --dry-run
 - 输出 `publish-report.json`
 - 保留历史兼容的 `mcp_success_list`、`remote_validation_failed`、`mcp_sync_report`
 
-这个命令现在已经覆盖 flow/process 的本地 reviewed publish 准备阶段；当显式传入 `--commit` 时，prepared flow rows 和 prepared process rows 都会通过 CLI 自己基于 `@supabase/supabase-js` 的 writer layer 执行远端提交，不再依赖任何 legacy skill 路径。
+这个命令现在已经覆盖 flow/process 的本地 reviewed publish 准备阶段；当显式传入 `--commit` 时，prepared flow rows 和 prepared process rows 都会通过 CLI 自己共享的 “REST 预检 + dataset command” writer layer 执行远端提交，不再依赖任何 legacy skill 路径。
 
 `tiangong flow build-alias-map` 现在已经承担 flow governance 的 deterministic alias map 切片，负责：
 
@@ -500,7 +530,12 @@ npm exec tiangong -- admin embedding-run --input ./jobs.json --dry-run
 - 输出 `relation-manifest.json`
 - 输出 `publish-report.json`
 
-当前实现刻意没有把旧 MCP 数据库写入逻辑重新塞回 CLI；commit 模式通过可插拔执行器承接，CLI 先把稳定的输入/输出契约和报告形状固定下来。
+`publish run` 的 `out_dir` 路径规则固定如下：
+
+- request 里的 `out_dir` / `output_dir` 与 CLI 的 `--out-dir` 覆盖值，只要是相对路径，都按 request 文件所在目录解析
+- 如果希望输出位置不受 request 文件位置影响，传绝对路径，不要依赖当前 shell `cwd`
+
+当前实现不会把旧 MCP 数据库写入逻辑重新塞回 CLI；但当提供 Supabase runtime 时，`lifecyclemodels` / `processes` / `sources` 会默认走共享的 dataset command executor：先做 REST 精确可见性预检，再调用 `app_dataset_create` / `app_dataset_save_draft`。如果调用方显式注入 executors，则仍以显式执行器为准。
 
 `tiangong validation run` 负责把本地 TIDAS 包校验统一收口到 CLI：
 

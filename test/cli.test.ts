@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { executeCli } from '../src/cli.js';
@@ -8,6 +8,8 @@ import type { DotEnvLoadResult } from '../src/lib/dotenv.js';
 import type { FetchLike } from '../src/lib/http.js';
 import type { RunFlowReviewedPublishDataOptions } from '../src/lib/flow-publish-reviewed-data.js';
 import type { RunFlowPublishVersionOptions } from '../src/lib/flow-publish-version.js';
+import type { RunFlowFetchRowsOptions } from '../src/lib/flow-fetch-rows.js';
+import type { RunFlowMaterializeDecisionsOptions } from '../src/lib/flow-materialize-decisions.js';
 import type {
   RunFlowRegenProductOptions,
   RunFlowValidateProcessesOptions,
@@ -15,6 +17,11 @@ import type {
 import type { RunFlowRemediateOptions } from '../src/lib/flow-remediate.js';
 import type { RunFlowReviewOptions } from '../src/lib/review-flow.js';
 import type { RunLifecyclemodelReviewOptions } from '../src/lib/review-lifecyclemodel.js';
+import {
+  buildSupabaseTestEnv,
+  isSupabaseAuthTokenUrl,
+  makeSupabaseAuthResponse,
+} from './helpers/supabase-auth.js';
 
 const dotEnvStatus: DotEnvLoadResult = {
   loaded: false,
@@ -23,21 +30,26 @@ const dotEnvStatus: DotEnvLoadResult = {
 };
 
 const makeDeps = (overrides?: Partial<NodeJS.ProcessEnv>) => ({
-  env: {
+  env: buildSupabaseTestEnv({
     TIANGONG_LCA_API_BASE_URL: 'https://example.com/functions/v1',
-    TIANGONG_LCA_API_KEY: 'secret-token',
     TIANGONG_LCA_REGION: 'us-east-1',
     ...overrides,
-  } as NodeJS.ProcessEnv,
+  }),
   dotEnvStatus,
-  fetchImpl: (async () => ({
-    ok: true,
-    status: 200,
-    headers: {
-      get: () => 'application/json',
-    },
-    text: async () => JSON.stringify({ ok: true }),
-  })) as FetchLike,
+  fetchImpl: (async (input) => {
+    if (isSupabaseAuthTokenUrl(String(input))) {
+      return makeSupabaseAuthResponse();
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get: () => 'application/json',
+      },
+      text: async () => JSON.stringify({ ok: true }),
+    };
+  }) as FetchLike,
 });
 
 test('executeCli prints main help when no command is given', async () => {
@@ -46,7 +58,7 @@ test('executeCli prints main help when no command is given', async () => {
   assert.match(result.stdout, /Unified TianGong command entrypoint/u);
   assert.match(result.stdout, /Implemented Commands:/u);
   assert.match(result.stdout, /Planned Surface \(not implemented yet\):/u);
-  assert.match(result.stdout, /process\s+get \| auto-build/u);
+  assert.match(result.stdout, /process\s+get \| list \| auto-build/u);
   assert.match(result.stdout, /process\s+auto-build/u);
   assert.match(result.stdout, /lifecyclemodel auto-build/u);
   assert.match(result.stdout, /lifecyclemodel auto-build \| validate-build \| publish-build/u);
@@ -73,7 +85,12 @@ test('executeCli main help reports loaded dotenv metadata when available', async
 test('executeCli prints version', async () => {
   const result = await executeCli(['--version'], makeDeps());
   assert.equal(result.exitCode, 0);
-  assert.equal(result.stdout, '0.0.1\n');
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as {
+    version: string;
+  };
+  assert.equal(result.stdout, `${packageJson.version}\n`);
 });
 
 test('executeCli returns doctor text and success status', async () => {
@@ -151,6 +168,8 @@ test('executeCli returns help for publish and validation namespaces', async () =
   assert.match(flowHelp.stdout, /tiangong flow <subcommand>/u);
   assert.match(flowHelp.stdout, /get/u);
   assert.match(flowHelp.stdout, /list/u);
+  assert.match(flowHelp.stdout, /fetch-rows/u);
+  assert.match(flowHelp.stdout, /materialize-decisions/u);
   assert.match(flowHelp.stdout, /remediate/u);
   assert.match(flowHelp.stdout, /publish-version/u);
   assert.match(flowHelp.stdout, /publish-reviewed-data/u);
@@ -163,6 +182,10 @@ test('executeCli returns help for publish and validation subcommands', async () 
   const publishHelp = await executeCli(['publish', 'run', '--help'], makeDeps());
   assert.equal(publishHelp.exitCode, 0);
   assert.match(publishHelp.stdout, /--out-dir/u);
+  assert.match(
+    publishHelp.stdout,
+    /Relative out_dir values from the request body or --out-dir resolve from the request file directory\./u,
+  );
 
   const validationHelp = await executeCli(['validation', 'run', '--help'], makeDeps());
   assert.equal(validationHelp.exitCode, 0);
@@ -170,10 +193,12 @@ test('executeCli returns help for publish and validation subcommands', async () 
 
   const reviewHelp = await executeCli(['review', 'process', '--help'], makeDeps());
   assert.equal(reviewHelp.exitCode, 0);
-  assert.match(
-    reviewHelp.stdout,
-    /tiangong review process --run-root <dir> --run-id <id> --out-dir <dir>/u,
+  assert.ok(
+    reviewHelp.stdout.includes(
+      'tiangong review process (--rows-file <file> | --run-root <dir>) --out-dir <dir>',
+    ),
   );
+  assert.match(reviewHelp.stdout, /full process list reports with rows\[\] are also accepted/u);
   assert.match(reviewHelp.stdout, /--enable-llm/u);
 
   const reviewFlowHelp = await executeCli(['review', 'flow', '--help'], makeDeps());
@@ -241,6 +266,26 @@ test('executeCli returns help for publish and validation subcommands', async () 
   assert.match(flowListHelp.stdout, /--type-of-dataset/u);
   assert.match(flowListHelp.stdout, /--page-size/u);
   assert.doesNotMatch(flowListHelp.stdout, /Planned command/u);
+
+  const flowFetchRowsHelp = await executeCli(['flow', 'fetch-rows', '--help'], makeDeps());
+  assert.equal(flowFetchRowsHelp.exitCode, 0);
+  assert.match(flowFetchRowsHelp.stdout, /tiangong flow fetch-rows --refs-file <file>/u);
+  assert.match(flowFetchRowsHelp.stdout, /--no-latest-fallback/u);
+  assert.match(flowFetchRowsHelp.stdout, /review-input-rows\.jsonl/u);
+  assert.doesNotMatch(flowFetchRowsHelp.stdout, /Planned command/u);
+
+  const flowMaterializeDecisionsHelp = await executeCli(
+    ['flow', 'materialize-decisions', '--help'],
+    makeDeps(),
+  );
+  assert.equal(flowMaterializeDecisionsHelp.exitCode, 0);
+  assert.match(
+    flowMaterializeDecisionsHelp.stdout,
+    /tiangong flow materialize-decisions --decision-file <file>/u,
+  );
+  assert.match(flowMaterializeDecisionsHelp.stdout, /manual-semantic-merge-seed\.current\.json/u);
+  assert.match(flowMaterializeDecisionsHelp.stdout, /blocked-clusters\.json/u);
+  assert.doesNotMatch(flowMaterializeDecisionsHelp.stdout, /Planned command/u);
 
   const flowRegenHelp = await executeCli(['flow', 'regen-product', '--help'], makeDeps());
   assert.equal(flowRegenHelp.exitCode, 0);
@@ -439,6 +484,168 @@ test('executeCli executes lifecyclemodel auto-build with injected implementation
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('executeCli executes flow fetch-rows with injected implementation', async () => {
+  const result = await executeCli(
+    [
+      'flow',
+      'fetch-rows',
+      '--json',
+      '--refs-file',
+      './refs.json',
+      '--out-dir',
+      './out',
+      '--no-latest-fallback',
+      '--fail-on-missing',
+    ],
+    {
+      ...makeDeps(),
+      runFlowFetchRowsImpl: async (options: RunFlowFetchRowsOptions) => {
+        assert.equal(options.refsFile, './refs.json');
+        assert.equal(options.outDir, './out');
+        assert.equal(options.allowLatestFallback, false);
+        return {
+          schema_version: 1,
+          generated_at_utc: '2026-04-06T00:00:00.000Z',
+          status: 'completed_flow_row_materialization_with_gaps',
+          refs_file: '/tmp/refs.json',
+          out_dir: '/tmp/out',
+          allow_latest_fallback: false,
+          requested_ref_count: 2,
+          resolved_ref_count: 1,
+          review_input_row_count: 1,
+          duplicate_review_input_rows_collapsed: 0,
+          missing_ref_count: 1,
+          ambiguous_ref_count: 0,
+          resolution_counts: {
+            remote_supabase_exact: 1,
+            remote_supabase_latest: 0,
+            remote_supabase_latest_fallback: 0,
+          },
+          files: {
+            resolved_flow_rows: '/tmp/out/resolved-flow-rows.jsonl',
+            review_input_rows: '/tmp/out/review-input-rows.jsonl',
+            fetch_summary: '/tmp/out/fetch-summary.json',
+            missing_flow_refs: '/tmp/out/missing-flow-refs.jsonl',
+            ambiguous_flow_refs: '/tmp/out/ambiguous-flow-refs.jsonl',
+          },
+        };
+      },
+    },
+  );
+
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stdout, /"status":"completed_flow_row_materialization_with_gaps"/u);
+  assert.match(result.stdout, /"review_input_row_count":1/u);
+});
+
+test('executeCli keeps exit code 0 for flow fetch-rows gaps unless --fail-on-missing is enabled', async () => {
+  const result = await executeCli(
+    ['flow', 'fetch-rows', '--json', '--refs-file', './refs.json', '--out-dir', './out'],
+    {
+      ...makeDeps(),
+      runFlowFetchRowsImpl: async () => ({
+        schema_version: 1,
+        generated_at_utc: '2026-04-07T00:00:00.000Z',
+        status: 'completed_flow_row_materialization_with_gaps',
+        refs_file: '/tmp/refs.json',
+        out_dir: '/tmp/out',
+        allow_latest_fallback: true,
+        requested_ref_count: 1,
+        resolved_ref_count: 0,
+        review_input_row_count: 0,
+        duplicate_review_input_rows_collapsed: 0,
+        missing_ref_count: 1,
+        ambiguous_ref_count: 0,
+        resolution_counts: {
+          remote_supabase_exact: 0,
+          remote_supabase_latest: 0,
+          remote_supabase_latest_fallback: 0,
+        },
+        files: {
+          resolved_flow_rows: '/tmp/out/resolved-flow-rows.jsonl',
+          review_input_rows: '/tmp/out/review-input-rows.jsonl',
+          fetch_summary: '/tmp/out/fetch-summary.json',
+          missing_flow_refs: '/tmp/out/missing-flow-refs.jsonl',
+          ambiguous_flow_refs: '/tmp/out/ambiguous-flow-refs.jsonl',
+        },
+      }),
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /"missing_ref_count":1/u);
+});
+
+test('executeCli executes flow materialize-decisions with injected implementation', async () => {
+  const result = await executeCli(
+    [
+      'flow',
+      'materialize-decisions',
+      '--json',
+      '--decision-file',
+      './decisions.json',
+      '--flow-rows-file',
+      './flow-rows.jsonl',
+      '--out-dir',
+      './out',
+    ],
+    {
+      ...makeDeps(),
+      runFlowMaterializeDecisionsImpl: async (options: RunFlowMaterializeDecisionsOptions) => {
+        assert.equal(options.decisionFile, './decisions.json');
+        assert.equal(options.flowRowsFile, './flow-rows.jsonl');
+        assert.equal(options.outDir, './out');
+        return {
+          schema_version: 1,
+          generated_at_utc: '2026-04-06T00:00:00.000Z',
+          status: 'completed_local_flow_decision_materialization',
+          decision_file: '/tmp/decisions.json',
+          flow_rows_file: '/tmp/flow-rows.jsonl',
+          out_dir: '/tmp/out',
+          counts: {
+            input_decisions: 1,
+            materialized_clusters: 1,
+            blocked_clusters: 0,
+            canonical_map_entries: 2,
+            rewrite_actions: 1,
+            seed_alias_entries: 1,
+            decision_counts: {
+              merge_keep_one: 1,
+              keep_distinct: 0,
+              blocked_missing_db_flow: 0,
+            },
+            blocked_reason_counts: {},
+          },
+          files: {
+            canonical_map: '/tmp/out/flow-dedup-canonical-map.json',
+            rewrite_plan: '/tmp/out/flow-dedup-rewrite-plan.json',
+            semantic_merge_seed: '/tmp/out/manual-semantic-merge-seed.current.json',
+            summary: '/tmp/out/decision-summary.json',
+            blocked_clusters: '/tmp/out/blocked-clusters.json',
+          },
+        };
+      },
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /"status":"completed_local_flow_decision_materialization"/u);
+  assert.match(result.stdout, /"rewrite_actions":1/u);
+});
+
+test('executeCli returns parsing errors for invalid flow fetch-rows and materialize-decisions flags', async () => {
+  const fetchRowsResult = await executeCli(['flow', 'fetch-rows', '--wat'], makeDeps());
+  assert.equal(fetchRowsResult.exitCode, 2);
+  assert.match(fetchRowsResult.stderr, /Unknown option '--wat'/u);
+
+  const materializeResult = await executeCli(
+    ['flow', 'materialize-decisions', '--wat'],
+    makeDeps(),
+  );
+  assert.equal(materializeResult.exitCode, 2);
+  assert.match(materializeResult.stderr, /Unknown option '--wat'/u);
 });
 
 test('executeCli executes lifecyclemodel orchestrate with injected implementation', async () => {
@@ -774,9 +981,11 @@ test('executeCli returns help for the process namespace and implemented subcomma
   assert.equal(processHelp.exitCode, 0);
   assert.match(processHelp.stdout, /tiangong process <subcommand>/u);
   assert.match(processHelp.stdout, /get/u);
+  assert.match(processHelp.stdout, /list/u);
   assert.match(processHelp.stdout, /auto-build/u);
   assert.match(processHelp.stdout, /resume-build/u);
   assert.match(processHelp.stdout, /publish-build/u);
+  assert.match(processHelp.stdout, /save-draft/u);
   assert.match(processHelp.stdout, /batch-build/u);
 
   const getHelp = await executeCli(['process', 'get', '--help'], makeDeps());
@@ -785,6 +994,13 @@ test('executeCli returns help for the process namespace and implemented subcomma
   assert.match(getHelp.stdout, /TIANGONG_LCA_API_BASE_URL/u);
   assert.match(getHelp.stdout, /TIANGONG_LCA_API_KEY/u);
   assert.doesNotMatch(getHelp.stdout, /Planned command/u);
+
+  const listHelp = await executeCli(['process', 'list', '--help'], makeDeps());
+  assert.equal(listHelp.exitCode, 0);
+  assert.match(listHelp.stdout, /tiangong process list \[options\]/u);
+  assert.match(listHelp.stdout, /--page-size/u);
+  assert.match(listHelp.stdout, /TIANGONG_LCA_API_BASE_URL/u);
+  assert.doesNotMatch(listHelp.stdout, /Planned command/u);
 
   const autoBuildHelp = await executeCli(['process', 'auto-build', '--help'], makeDeps());
   assert.equal(autoBuildHelp.exitCode, 0);
@@ -804,6 +1020,13 @@ test('executeCli returns help for the process namespace and implemented subcomma
   assert.match(publishBuildHelp.stdout, /tiangong process publish-build --run-dir <dir>/u);
   assert.match(publishBuildHelp.stdout, /--run-dir/u);
   assert.doesNotMatch(publishBuildHelp.stdout, /Planned command/u);
+
+  const saveDraftHelp = await executeCli(['process', 'save-draft', '--help'], makeDeps());
+  assert.equal(saveDraftHelp.exitCode, 0);
+  assert.match(saveDraftHelp.stdout, /tiangong process save-draft --input <file>/u);
+  assert.match(saveDraftHelp.stdout, /--commit/u);
+  assert.match(saveDraftHelp.stdout, /outputs\/save-draft-rpc\/summary\.json/u);
+  assert.doesNotMatch(saveDraftHelp.stdout, /Planned command/u);
 
   const batchBuildHelp = await executeCli(['process', 'batch-build', '--help'], makeDeps());
   assert.equal(batchBuildHelp.exitCode, 0);
@@ -908,6 +1131,116 @@ test('executeCli executes process get with injected implementation', async () =>
   assert.equal(result.exitCode, 0);
   assert.match(result.stdout, /"status": "resolved_remote_process"/u);
   assert.equal(result.stderr, '');
+});
+
+test('executeCli executes process list with injected implementation', async () => {
+  const deps = makeDeps({
+    TIANGONG_LCA_API_BASE_URL: 'https://supabase.example/functions/v1',
+    TIANGONG_LCA_API_KEY: 'supabase-api-key',
+  });
+
+  const result = await executeCli(
+    [
+      'process',
+      'list',
+      '--id',
+      'proc-1',
+      '--version',
+      '00.00.001',
+      '--user-id',
+      'user-1',
+      '--state-code',
+      '100',
+      '--all',
+      '--page-size',
+      '50',
+      '--order',
+      'version.desc',
+    ],
+    {
+      ...deps,
+      runProcessListImpl: async (options) => {
+        assert.deepEqual(options.ids, ['proc-1']);
+        assert.equal(options.version, '00.00.001');
+        assert.equal(options.userId, 'user-1');
+        assert.deepEqual(options.stateCodes, [100]);
+        assert.equal(options.all, true);
+        assert.equal(options.pageSize, 50);
+        assert.equal(options.order, 'version.desc');
+        assert.equal(options.env, deps.env);
+        assert.equal(options.fetchImpl, deps.fetchImpl);
+        return {
+          schema_version: 1,
+          generated_at_utc: '2026-03-30T00:00:00.000Z',
+          status: 'listed_remote_processes',
+          filters: {
+            ids: ['proc-1'],
+            requested_version: '00.00.001',
+            requested_user_id: 'user-1',
+            requested_state_codes: [100],
+            order: 'version.desc',
+            all: true,
+            limit: null,
+            offset: 0,
+            page_size: 50,
+          },
+          count: 1,
+          source_urls: ['https://supabase.example/rest/v1/processes?id=eq.proc-1'],
+          rows: [
+            {
+              id: 'proc-1',
+              version: '00.00.001',
+              user_id: 'user-1',
+              state_code: 100,
+              modified_at: null,
+              process: { processDataSet: { id: 'proc-1' } },
+            },
+          ],
+        };
+      },
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /"status": "listed_remote_processes"/u);
+  assert.equal(result.stderr, '');
+});
+
+test('executeCli parses non-all process list pagination flags', async () => {
+  const deps = makeDeps({
+    TIANGONG_LCA_API_BASE_URL: 'https://supabase.example/functions/v1',
+    TIANGONG_LCA_API_KEY: 'supabase-api-key',
+  });
+
+  const result = await executeCli(['process', 'list', '--limit', '5', '--offset', '3'], {
+    ...deps,
+    runProcessListImpl: async (options) => {
+      assert.equal(options.limit, 5);
+      assert.equal(options.offset, 3);
+      return {
+        schema_version: 1,
+        generated_at_utc: '2026-03-30T00:00:00.000Z',
+        status: 'listed_remote_processes',
+        filters: {
+          ids: [],
+          requested_version: null,
+          requested_user_id: null,
+          requested_state_codes: [],
+          order: 'id.asc,version.asc',
+          all: false,
+          limit: 5,
+          offset: 3,
+          page_size: null,
+        },
+        count: 0,
+        source_urls: ['https://supabase.example/rest/v1/processes?limit=5&offset=3'],
+        rows: [],
+      };
+    },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /"offset": 3/u);
 });
 
 test('executeCli executes flow get with injected implementation', async () => {
@@ -1497,6 +1830,185 @@ test('executeCli executes process publish-build with run-dir only', async () => 
   }
 });
 
+test('executeCli executes process save-draft with injected implementation', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-process-save-draft-cli-'));
+  const inputPath = path.join(dir, 'patched-processes.jsonl');
+  writeFileSync(inputPath, '{"id":"proc-1"}\n', 'utf8');
+
+  try {
+    const result = await executeCli(
+      [
+        'process',
+        'save-draft',
+        '--json',
+        '--input',
+        inputPath,
+        '--out-dir',
+        './save-root',
+        '--commit',
+      ],
+      {
+        ...makeDeps(),
+        runProcessSaveDraftImpl: async (options) => {
+          assert.equal(options.inputPath, inputPath);
+          assert.equal(options.outDir, './save-root');
+          assert.equal(options.commit, true);
+          return {
+            generated_at_utc: '2026-04-14T12:00:00.000Z',
+            input_path: inputPath,
+            input_kind: 'rows_file',
+            out_dir: path.join(dir, 'save-root'),
+            commit: true,
+            mode: 'commit',
+            status: 'completed',
+            counts: {
+              selected: 1,
+              prepared: 0,
+              executed: 1,
+              failed: 0,
+            },
+            files: {
+              normalized_input: path.join(dir, 'save-root', 'inputs', 'normalized-input.json'),
+              selected_processes: path.join(
+                dir,
+                'save-root',
+                'outputs',
+                'save-draft-rpc',
+                'selected-processes.jsonl',
+              ),
+              progress_jsonl: path.join(
+                dir,
+                'save-root',
+                'outputs',
+                'save-draft-rpc',
+                'progress.jsonl',
+              ),
+              failures_jsonl: path.join(
+                dir,
+                'save-root',
+                'outputs',
+                'save-draft-rpc',
+                'failures.jsonl',
+              ),
+              summary_json: path.join(
+                dir,
+                'save-root',
+                'outputs',
+                'save-draft-rpc',
+                'summary.json',
+              ),
+            },
+            processes: [
+              {
+                id: 'proc-1',
+                version: '01.01.000',
+                source: 'rows_file',
+                bundle_path: null,
+                status: 'executed',
+                execution: {
+                  status: 'success',
+                  operation: 'save_draft',
+                  write_path: 'cmd_dataset_save_draft',
+                  rpc_result: { ok: true },
+                  visible_row: {
+                    id: 'proc-1',
+                    version: '01.01.000',
+                    user_id: 'user-1',
+                    state_code: 0,
+                  },
+                },
+              },
+            ],
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /"status":"completed"/u);
+    assert.match(result.stdout, /"write_path":"cmd_dataset_save_draft"/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('executeCli maps process save-draft failures to exit code 1', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-process-save-draft-cli-failure-'));
+  const inputPath = path.join(dir, 'patched-processes.jsonl');
+  writeFileSync(inputPath, '{"id":"proc-1"}\n', 'utf8');
+
+  try {
+    const result = await executeCli(['process', 'save-draft', '--input', inputPath], {
+      ...makeDeps(),
+      runProcessSaveDraftImpl: async () => ({
+        generated_at_utc: '2026-04-14T12:05:00.000Z',
+        input_path: inputPath,
+        input_kind: 'rows_file',
+        out_dir: path.join(dir, 'save-root'),
+        commit: false,
+        mode: 'dry_run',
+        status: 'completed_with_failures',
+        counts: {
+          selected: 1,
+          prepared: 0,
+          executed: 0,
+          failed: 1,
+        },
+        files: {
+          normalized_input: path.join(dir, 'save-root', 'inputs', 'normalized-input.json'),
+          selected_processes: path.join(
+            dir,
+            'save-root',
+            'outputs',
+            'save-draft-rpc',
+            'selected-processes.jsonl',
+          ),
+          progress_jsonl: path.join(
+            dir,
+            'save-root',
+            'outputs',
+            'save-draft-rpc',
+            'progress.jsonl',
+          ),
+          failures_jsonl: path.join(
+            dir,
+            'save-root',
+            'outputs',
+            'save-draft-rpc',
+            'failures.jsonl',
+          ),
+          summary_json: path.join(dir, 'save-root', 'outputs', 'save-draft-rpc', 'summary.json'),
+        },
+        processes: [
+          {
+            id: 'proc-1',
+            version: '01.01.000',
+            source: 'rows_file',
+            bundle_path: null,
+            status: 'failed',
+            error: { message: 'owner required' },
+          },
+        ],
+      }),
+    });
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stdout, /owner required/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('executeCli rejects conflicting process save-draft mode flags', async () => {
+  const result = await executeCli(
+    ['process', 'save-draft', '--input', './rows.jsonl', '--commit', '--dry-run'],
+    makeDeps(),
+  );
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /INVALID_PROCESS_SAVE_DRAFT_MODE/u);
+});
+
 test('executeCli executes process batch-build with injected implementation', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-process-batch-build-cli-'));
   const inputPath = path.join(dir, 'batch-request.json');
@@ -1711,14 +2223,18 @@ test('executeCli surfaces missing search API configuration after exhausting all 
       ['search', 'flow', '--input', inputPath],
       makeDeps({
         TIANGONG_LCA_API_BASE_URL: undefined,
-        TIANGONG_LCA_API_KEY: undefined,
+        TIANGONG_LCA_API_KEY: '',
+        TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY: undefined,
         TIANGONG_LCA_REGION: undefined,
       }),
     );
 
     assert.equal(result.exitCode, 2);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /API_BASE_URL_REQUIRED/u);
+    assert.match(result.stderr, /SUPABASE_REST_ENV_REQUIRED/u);
+    assert.match(result.stderr, /TIANGONG_LCA_API_BASE_URL/u);
+    assert.match(result.stderr, /TIANGONG_LCA_API_KEY/u);
+    assert.match(result.stderr, /TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY/u);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1734,14 +2250,18 @@ test('executeCli surfaces missing admin API configuration after exhausting all f
       ['admin', 'embedding-run', '--input', inputPath],
       makeDeps({
         TIANGONG_LCA_API_BASE_URL: undefined,
-        TIANGONG_LCA_API_KEY: undefined,
+        TIANGONG_LCA_API_KEY: '',
+        TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY: undefined,
         TIANGONG_LCA_REGION: undefined,
       }),
     );
 
     assert.equal(result.exitCode, 2);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /API_BASE_URL_REQUIRED/u);
+    assert.match(result.stderr, /SUPABASE_REST_ENV_REQUIRED/u);
+    assert.match(result.stderr, /TIANGONG_LCA_API_BASE_URL/u);
+    assert.match(result.stderr, /TIANGONG_LCA_API_KEY/u);
+    assert.match(result.stderr, /TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY/u);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1778,7 +2298,11 @@ test('executeCli returns unexpected error payloads from remote execution failure
   try {
     const result = await executeCli(['search', 'flow', '--input', inputPath], {
       ...makeDeps(),
-      fetchImpl: (async () => {
+      fetchImpl: (async (input) => {
+        if (isSupabaseAuthTokenUrl(String(input))) {
+          return makeSupabaseAuthResponse();
+        }
+
         throw new Error('network down');
       }) as FetchLike,
     });
@@ -2008,6 +2532,33 @@ test('executeCli returns parsing errors for invalid lifecyclemodel, process, and
   assert.equal(processGetResult.stdout, '');
   assert.match(processGetResult.stderr, /INVALID_ARGS/u);
 
+  const processListResult = await executeCli(['process', 'list', '--bad-flag'], makeDeps());
+  assert.equal(processListResult.exitCode, 2);
+  assert.equal(processListResult.stdout, '');
+  assert.match(processListResult.stderr, /INVALID_ARGS/u);
+
+  const processListPageSizeResult = await executeCli(
+    ['process', 'list', '--page-size', '10'],
+    makeDeps(),
+  );
+  assert.equal(processListPageSizeResult.exitCode, 2);
+  assert.match(processListPageSizeResult.stderr, /PROCESS_LIST_PAGE_SIZE_REQUIRES_ALL/u);
+
+  const processListStateCodeResult = await executeCli(
+    ['process', 'list', '--state-code=-1'],
+    makeDeps(),
+  );
+  assert.equal(processListStateCodeResult.exitCode, 2);
+  assert.match(processListStateCodeResult.stderr, /INVALID_PROCESS_LIST_STATE_CODE/u);
+
+  const processListLimitResult = await executeCli(['process', 'list', '--limit=0'], makeDeps());
+  assert.equal(processListLimitResult.exitCode, 2);
+  assert.match(processListLimitResult.stderr, /INVALID_PROCESS_LIST_LIMIT/u);
+
+  const processListOffsetResult = await executeCli(['process', 'list', '--offset=-1'], makeDeps());
+  assert.equal(processListOffsetResult.exitCode, 2);
+  assert.match(processListOffsetResult.stderr, /INVALID_PROCESS_LIST_OFFSET/u);
+
   const processResult = await executeCli(['process', 'auto-build', '--bad-flag'], makeDeps());
   assert.equal(processResult.exitCode, 2);
   assert.equal(processResult.stdout, '');
@@ -2028,6 +2579,14 @@ test('executeCli returns parsing errors for invalid lifecyclemodel, process, and
   assert.equal(processPublishResult.exitCode, 2);
   assert.equal(processPublishResult.stdout, '');
   assert.match(processPublishResult.stderr, /INVALID_ARGS/u);
+
+  const processSaveDraftResult = await executeCli(
+    ['process', 'save-draft', '--bad-flag'],
+    makeDeps(),
+  );
+  assert.equal(processSaveDraftResult.exitCode, 2);
+  assert.equal(processSaveDraftResult.stdout, '');
+  assert.match(processSaveDraftResult.stderr, /INVALID_ARGS/u);
 
   const processBatchResult = await executeCli(['process', 'batch-build', '--bad-flag'], makeDeps());
   assert.equal(processBatchResult.exitCode, 2);
@@ -2112,6 +2671,9 @@ test('executeCli executes review process with injected implementation', async ()
       {
         ...makeDeps(),
         runProcessReviewImpl: async (options) => {
+          assert.equal(options.rowsFile, undefined);
+          assert.equal(options.runRoot, path.join(dir, 'run-root'));
+          assert.equal(options.runId, 'run-001');
           assert.equal(options.startTs, '2026-03-30T00:00:00.000Z');
           assert.equal(options.endTs, '2026-03-30T00:05:00.000Z');
           assert.equal(options.logicVersion, 'v2.2');
@@ -2121,9 +2683,12 @@ test('executeCli executes review process with injected implementation', async ()
             schema_version: 1,
             generated_at_utc: '2026-03-30T00:00:00.000Z',
             status: 'completed_local_process_review',
-            run_id: options.runId,
-            run_root: options.runRoot,
+            run_id: options.runId ?? 'run-001',
+            run_root: options.runRoot ?? '',
+            rows_file: options.rowsFile ?? '',
             out_dir: options.outDir,
+            input_mode: 'run_root',
+            effective_processes_dir: path.join(dir, 'run-root', 'exports', 'processes'),
             logic_version: options.logicVersion ?? 'v2.1',
             process_count: 1,
             totals: {
@@ -2134,6 +2699,8 @@ test('executeCli executes review process with injected implementation', async ()
               energy_excluded: 0,
             },
             files: {
+              review_input_summary: path.join(dir, 'review', 'review-input-summary.json'),
+              materialization_summary: null,
               review_zh: path.join(dir, 'review', 'zh.md'),
               review_en: path.join(dir, 'review', 'en.md'),
               timing: path.join(dir, 'review', 'timing.md'),
@@ -2162,6 +2729,69 @@ test('executeCli executes review process with injected implementation', async ()
   }
 });
 
+test('executeCli passes rows-file review process input through to the implementation', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-review-cli-rows-'));
+  const rowsFile = path.join(dir, 'process-list-report.json');
+
+  try {
+    const result = await executeCli(
+      ['review', 'process', '--rows-file', rowsFile, '--out-dir', path.join(dir, 'review')],
+      {
+        ...makeDeps(),
+        runProcessReviewImpl: async (options) => {
+          assert.equal(options.rowsFile, rowsFile);
+          assert.equal(options.runRoot, undefined);
+          assert.equal(options.runId, undefined);
+          return {
+            schema_version: 1,
+            generated_at_utc: '2026-03-30T00:00:00.000Z',
+            status: 'completed_local_process_review',
+            run_id: 'process-list-report',
+            run_root: '',
+            rows_file: rowsFile,
+            out_dir: options.outDir,
+            input_mode: 'rows_file',
+            effective_processes_dir: path.join(dir, 'review', 'review-input', 'processes'),
+            logic_version: 'v2.1',
+            process_count: 1,
+            totals: {
+              raw_input: 1,
+              product_plus_byproduct_plus_waste: 1,
+              delta: 0,
+              relative_deviation: 0,
+              energy_excluded: 0,
+            },
+            files: {
+              review_input_summary: path.join(dir, 'review', 'review-input-summary.json'),
+              materialization_summary: path.join(
+                dir,
+                'review',
+                'review-input',
+                'materialization-summary.json',
+              ),
+              review_zh: path.join(dir, 'review', 'zh.md'),
+              review_en: path.join(dir, 'review', 'en.md'),
+              timing: path.join(dir, 'review', 'timing.md'),
+              unit_issue_log: path.join(dir, 'review', 'unit.md'),
+              summary: path.join(dir, 'review', 'summary.json'),
+              report: path.join(dir, 'review', 'report.json'),
+            },
+            llm: {
+              enabled: false,
+              reason: 'disabled',
+            },
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /"input_mode": "rows_file"/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('executeCli executes review process with only required flags', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-review-cli-required-'));
 
@@ -2180,6 +2810,9 @@ test('executeCli executes review process with only required flags', async () => 
       {
         ...makeDeps(),
         runProcessReviewImpl: async (options) => {
+          assert.equal(options.rowsFile, undefined);
+          assert.equal(options.runRoot, path.join(dir, 'run-root'));
+          assert.equal(options.runId, 'run-required');
           assert.equal(options.startTs, undefined);
           assert.equal(options.endTs, undefined);
           assert.equal(options.logicVersion, undefined);
@@ -2190,9 +2823,12 @@ test('executeCli executes review process with only required flags', async () => 
             schema_version: 1,
             generated_at_utc: '2026-03-30T00:00:00.000Z',
             status: 'completed_local_process_review',
-            run_id: options.runId,
-            run_root: options.runRoot,
+            run_id: options.runId ?? 'run-required',
+            run_root: options.runRoot ?? '',
+            rows_file: options.rowsFile ?? '',
             out_dir: options.outDir,
+            input_mode: 'run_root',
+            effective_processes_dir: path.join(dir, 'run-root', 'exports', 'processes'),
             logic_version: 'v2.1',
             process_count: 0,
             totals: {
@@ -2203,6 +2839,8 @@ test('executeCli executes review process with only required flags', async () => 
               energy_excluded: 0,
             },
             files: {
+              review_input_summary: path.join(dir, 'review', 'review-input-summary.json'),
+              materialization_summary: null,
               review_zh: path.join(dir, 'review', 'zh.md'),
               review_en: path.join(dir, 'review', 'en.md'),
               timing: path.join(dir, 'review', 'timing.md'),
@@ -2778,7 +3416,11 @@ test('executeCli dispatches flow publish-reviewed-data to the implemented CLI mo
       observedOptions?.env?.TIANGONG_LCA_API_BASE_URL,
       'https://example.com/functions/v1',
     );
-    assert.equal(observedOptions?.env?.TIANGONG_LCA_API_KEY, 'secret-token');
+    assert.equal(observedOptions?.env?.TIANGONG_LCA_API_KEY, makeDeps().env.TIANGONG_LCA_API_KEY);
+    assert.equal(
+      observedOptions?.env?.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY,
+      makeDeps().env.TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY,
+    );
     assert.equal(typeof observedOptions?.fetchImpl, 'function');
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -3660,10 +4302,10 @@ test('executeCli supports alternate review flow input modes and validates numeri
 });
 
 test('executeCli returns planned command message for other unimplemented process subcommands', async () => {
-  const result = await executeCli(['process', 'list'], makeDeps());
+  const result = await executeCli(['process', 'delete'], makeDeps());
   assert.equal(result.exitCode, 2);
   assert.equal(result.stdout, '');
-  assert.match(result.stderr, /Command 'process list'/u);
+  assert.match(result.stderr, /Command 'process delete'/u);
 
   const flowRegenHelp = await executeCli(['flow', 'regen-product', '--help'], makeDeps());
   assert.equal(flowRegenHelp.exitCode, 0);
