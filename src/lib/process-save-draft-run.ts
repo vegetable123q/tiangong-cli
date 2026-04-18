@@ -339,7 +339,12 @@ function prepareRowsFileInput(
       row_count: normalizedRows.length,
     },
     processes: normalizedRows.map((row) =>
-      candidateFromPayload(processPayloadFromRow(row), 'rows_file', null, validateProcessPayloadImpl),
+      candidateFromPayload(
+        processPayloadFromRow(row),
+        'rows_file',
+        null,
+        validateProcessPayloadImpl,
+      ),
     ),
   };
 }

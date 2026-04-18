@@ -56,6 +56,16 @@ import {
   type RunProcessBatchBuildOptions,
 } from './lib/process-batch-build.js';
 import {
+  runProcessScopeStatistics,
+  type ProcessScopeStatisticsReport,
+  type RunProcessScopeStatisticsOptions,
+} from './lib/process-scope-statistics.js';
+import {
+  runProcessDedupReview,
+  type ProcessDedupReviewReport,
+  type RunProcessDedupReviewOptions,
+} from './lib/process-dedup-review.js';
+import {
   runProcessResumeBuild,
   type ProcessResumeBuildReport,
   type RunProcessResumeBuildOptions,
@@ -174,6 +184,12 @@ export type CliDeps = {
   runProcessBatchBuildImpl?: (
     options: RunProcessBatchBuildOptions,
   ) => Promise<ProcessBatchBuildReport>;
+  runProcessScopeStatisticsImpl?: (
+    options: RunProcessScopeStatisticsOptions,
+  ) => Promise<ProcessScopeStatisticsReport>;
+  runProcessDedupReviewImpl?: (
+    options: RunProcessDedupReviewOptions,
+  ) => Promise<ProcessDedupReviewReport>;
   runProcessResumeBuildImpl?: (
     options: RunProcessResumeBuildOptions,
   ) => Promise<ProcessResumeBuildReport>;
@@ -250,7 +266,7 @@ Commands:
 Implemented Commands:
   doctor     show environment diagnostics
   search     flow | process | lifecyclemodel
-  process    get | list | auto-build | resume-build | publish-build | save-draft | batch-build
+  process    get | list | scope-statistics | dedup-review | auto-build | resume-build | publish-build | save-draft | batch-build
   flow       get | list | fetch-rows | materialize-decisions | remediate | publish-version | publish-reviewed-data | build-alias-map | scan-process-flow-refs | plan-process-flow-repairs | apply-process-flow-repairs | regen-product | validate-processes
   lifecyclemodel auto-build | validate-build | publish-build | build-resulting-process | publish-resulting-process | orchestrate
   review     process | flow | lifecyclemodel
@@ -270,6 +286,8 @@ Examples:
   tiangong search process --input ./request.json --dry-run
   tiangong process get --id <process-id>
   tiangong process list --state-code 100 --limit 20
+  tiangong process scope-statistics --out-dir ./process-scope --state-code 0 --state-code 100
+  tiangong process dedup-review --input ./duplicate-groups.json --out-dir ./process-dedup
   tiangong process auto-build --input ./pff-request.json
   tiangong process resume-build --run-id <id>
   tiangong process publish-build --run-id <id>
@@ -1027,6 +1045,79 @@ Runtime note:
 `.trim();
 }
 
+function renderProcessScopeStatisticsHelp(): string {
+  return `Usage:
+  tiangong process scope-statistics --out-dir <dir> [options]
+
+Options:
+  --out-dir <dir>          Artifact root to write inputs/outputs/reports
+  --scope <name>           visible | current-user (default: visible)
+  --state-code <code>      Repeatable non-negative integer state code filter
+  --state-codes <csv>      Comma-separated alias for one or more state codes
+  --page-size <n>          Remote page size (default: 200)
+  --reuse-snapshot         Reuse inputs/processes.snapshot.rows.jsonl instead of refetching
+  --json                   Print compact JSON
+  -h, --help
+
+Outputs written under --out-dir:
+  - inputs/processes.snapshot.manifest.json
+  - inputs/processes.snapshot.rows.jsonl
+  - outputs/process-scope-summary.json
+  - outputs/domain-summary.json
+  - outputs/craft-summary.json
+  - outputs/product-summary.json
+  - outputs/type-of-dataset-summary.json
+  - reports/process-scope-statistics.md
+  - reports/process-scope-statistics.zh-CN.md
+`.trim();
+}
+
+function renderProcessDedupReviewHelp(): string {
+  return `Usage:
+  tiangong process dedup-review --input <file> --out-dir <dir> [options]
+
+Options:
+  --input <file>           Grouped duplicate-candidate JSON input
+  --out-dir <dir>          Artifact root to write inputs/outputs
+  --skip-remote            Skip optional TianGong remote enrichment and reference scans
+  --json                   Print compact JSON
+  -h, --help
+
+Input contract:
+  {
+    "source_label": "duplicate-processes-export",
+    "groups": [
+      {
+        "group_id": 1,
+        "processes": [
+          {
+            "process_id": "proc-1",
+            "version": "01.00.000",
+            "name_en": "Example",
+            "name_zh": "示例",
+            "sheet_exchange_rows": [
+              {
+                "flow_id": "flow-1",
+                "direction": "Input",
+                "mean_amount": "1",
+                "resulting_amount": "1"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+
+Outputs written under --out-dir:
+  - inputs/dedup-input.manifest.json
+  - inputs/processes.remote-metadata.json (when remote enrichment succeeds)
+  - outputs/duplicate-groups.json
+  - outputs/delete-plan.json
+  - outputs/current-user-reference-scan.json (when reference scan succeeds)
+`.trim();
+}
+
 function renderProcessResumeBuildHelp(): string {
   return `Usage:
   tiangong process resume-build [--run-id <id>] [--run-dir <dir>] [options]
@@ -1100,6 +1191,8 @@ function renderProcessHelp(): string {
 Implemented Subcommands:
   get          Load one process dataset by identifier through direct Supabase access
   list         List visible process rows through direct Supabase access
+  scope-statistics Count repeatable coverage statistics from visible or owner-filtered process snapshots
+  dedup-review Review grouped duplicate process candidates and emit keep/delete evidence
   auto-build   Prepare a local process-from-flow run scaffold and artifact workspace
   resume-build Prepare a local resume handoff from one existing process build run
   publish-build Prepare publish handoff artifacts from one existing process build run
@@ -1110,6 +1203,8 @@ Examples:
   tiangong process --help
   tiangong process get --id <process-id>
   tiangong process list --state-code 100 --limit 20 --help
+  tiangong process scope-statistics --out-dir ./process-scope --state-code 0 --state-code 100 --help
+  tiangong process dedup-review --input ./duplicate-groups.json --out-dir ./process-dedup --help
   tiangong process auto-build --help
   tiangong process resume-build --run-id <id> --help
   tiangong process publish-build --run-id <id> --help
@@ -2882,6 +2977,131 @@ function parseProcessListFlags(args: string[]): {
   };
 }
 
+function parseProcessScopeStatisticsFlags(args: string[]): {
+  help: boolean;
+  json: boolean;
+  outDir: string;
+  scope: 'visible' | 'current-user' | undefined;
+  stateCodes: number[];
+  pageSize: number | null;
+  reuseSnapshot: boolean;
+} {
+  let values: ReturnType<typeof parseArgs>['values'];
+  try {
+    ({ values } = parseArgs({
+      args,
+      allowPositionals: false,
+      strict: true,
+      options: {
+        help: { type: 'boolean', short: 'h' },
+        json: { type: 'boolean' },
+        'out-dir': { type: 'string' },
+        scope: { type: 'string' },
+        'state-code': { type: 'string', multiple: true },
+        'state-codes': { type: 'string' },
+        'page-size': { type: 'string' },
+        'reuse-snapshot': { type: 'boolean' },
+      },
+    }));
+  } catch (error) {
+    throw new CliError(String(error), {
+      code: 'INVALID_ARGS',
+      exitCode: 2,
+    });
+  }
+
+  const parseStateCode = (value: string): number => {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      throw new CliError('Expected --state-code to be a non-negative integer.', {
+        code: 'INVALID_PROCESS_SCOPE_STATE_CODE',
+        exitCode: 2,
+      });
+    }
+    return parsed;
+  };
+
+  const stateCodes = [
+    ...(Array.isArray(values['state-code'])
+      ? values['state-code'].map((value) => parseStateCode(String(value)))
+      : []),
+    ...(typeof values['state-codes'] === 'string' ? values['state-codes'].split(',') : [])
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => parseStateCode(value)),
+  ];
+
+  let pageSize: number | null = null;
+  if (typeof values['page-size'] === 'string') {
+    const parsed = Number.parseInt(values['page-size'], 10);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new CliError('Expected --page-size to be a positive integer.', {
+        code: 'INVALID_PROCESS_SCOPE_PAGE_SIZE',
+        exitCode: 2,
+      });
+    }
+    pageSize = parsed;
+  }
+
+  let scope: 'visible' | 'current-user' | undefined;
+  if (typeof values.scope === 'string') {
+    if (values.scope !== 'visible' && values.scope !== 'current-user') {
+      throw new CliError("Expected --scope to be either 'visible' or 'current-user'.", {
+        code: 'INVALID_PROCESS_SCOPE_SCOPE',
+        exitCode: 2,
+      });
+    }
+    scope = values.scope;
+  }
+
+  return {
+    help: Boolean(values.help),
+    json: Boolean(values.json),
+    outDir: typeof values['out-dir'] === 'string' ? values['out-dir'] : '',
+    scope,
+    stateCodes,
+    pageSize,
+    reuseSnapshot: Boolean(values['reuse-snapshot']),
+  };
+}
+
+function parseProcessDedupReviewFlags(args: string[]): {
+  help: boolean;
+  json: boolean;
+  inputPath: string;
+  outDir: string;
+  skipRemote: boolean;
+} {
+  let values: ReturnType<typeof parseArgs>['values'];
+  try {
+    ({ values } = parseArgs({
+      args,
+      allowPositionals: false,
+      strict: true,
+      options: {
+        help: { type: 'boolean', short: 'h' },
+        json: { type: 'boolean' },
+        input: { type: 'string' },
+        'out-dir': { type: 'string' },
+        'skip-remote': { type: 'boolean' },
+      },
+    }));
+  } catch (error) {
+    throw new CliError(String(error), {
+      code: 'INVALID_ARGS',
+      exitCode: 2,
+    });
+  }
+
+  return {
+    help: Boolean(values.help),
+    json: Boolean(values.json),
+    inputPath: typeof values.input === 'string' ? values.input : '',
+    outDir: typeof values['out-dir'] === 'string' ? values['out-dir'] : '',
+    skipRemote: Boolean(values['skip-remote']),
+  };
+}
+
 function parseProcessResumeBuildFlags(args: string[]): {
   help: boolean;
   json: boolean;
@@ -3073,6 +3293,9 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
     const processListImpl = deps.runProcessListImpl ?? runProcessList;
     const processAutoBuildImpl = deps.runProcessAutoBuildImpl ?? runProcessAutoBuild;
     const processBatchBuildImpl = deps.runProcessBatchBuildImpl ?? runProcessBatchBuild;
+    const processScopeStatisticsImpl =
+      deps.runProcessScopeStatisticsImpl ?? runProcessScopeStatistics;
+    const processDedupReviewImpl = deps.runProcessDedupReviewImpl ?? runProcessDedupReview;
     const processResumeBuildImpl = deps.runProcessResumeBuildImpl ?? runProcessResumeBuild;
     const processPublishBuildImpl = deps.runProcessPublishBuildImpl ?? runProcessPublishBuild;
     const processSaveDraftImpl = deps.runProcessSaveDraftImpl ?? runProcessSaveDraft;
@@ -3356,6 +3579,58 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
         all: processFlags.all,
         pageSize: processFlags.pageSize,
         order: processFlags.order,
+        env: deps.env,
+        fetchImpl: deps.fetchImpl,
+      });
+
+      return {
+        exitCode: 0,
+        stdout: stringifyJson(report, processFlags.json),
+        stderr: '',
+      };
+    }
+
+    if (command === 'process' && subcommand === 'scope-statistics') {
+      const processFlags = parseProcessScopeStatisticsFlags(commandArgs);
+      if (processFlags.help) {
+        return {
+          exitCode: 0,
+          stdout: `${renderProcessScopeStatisticsHelp()}\n`,
+          stderr: '',
+        };
+      }
+
+      const report = await processScopeStatisticsImpl({
+        outDir: processFlags.outDir,
+        scope: processFlags.scope,
+        stateCodes: processFlags.stateCodes,
+        pageSize: processFlags.pageSize,
+        reuseSnapshot: processFlags.reuseSnapshot,
+        env: deps.env,
+        fetchImpl: deps.fetchImpl,
+      });
+
+      return {
+        exitCode: 0,
+        stdout: stringifyJson(report, processFlags.json),
+        stderr: '',
+      };
+    }
+
+    if (command === 'process' && subcommand === 'dedup-review') {
+      const processFlags = parseProcessDedupReviewFlags(commandArgs);
+      if (processFlags.help) {
+        return {
+          exitCode: 0,
+          stdout: `${renderProcessDedupReviewHelp()}\n`,
+          stderr: '',
+        };
+      }
+
+      const report = await processDedupReviewImpl({
+        inputPath: processFlags.inputPath,
+        outDir: processFlags.outDir,
+        skipRemote: processFlags.skipRemote,
         env: deps.env,
         fetchImpl: deps.fetchImpl,
       });

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { CliError } from '../src/lib/errors.js';
+import type { ProcessPayloadValidationResult } from '../src/lib/process-payload-validation.js';
 import { runProcessSaveDraft } from '../src/lib/process-save-draft-run.js';
 import type { FetchLike } from '../src/lib/http.js';
 import {
@@ -12,13 +13,12 @@ import {
   makeSupabaseAuthResponse,
 } from './helpers/supabase-auth.js';
 
-const VALIDATION_OK = () =>
-  ({
-    ok: true,
-    validator: 'test-validator',
-    issue_count: 0,
-    issues: [],
-  }) as const;
+const VALIDATION_OK = (): ProcessPayloadValidationResult => ({
+  ok: true,
+  validator: 'test-validator',
+  issue_count: 0,
+  issues: [],
+});
 
 function writeJson(filePath: string, value: unknown): void {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');

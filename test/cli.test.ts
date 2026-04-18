@@ -58,7 +58,10 @@ test('executeCli prints main help when no command is given', async () => {
   assert.match(result.stdout, /Unified TianGong command entrypoint/u);
   assert.match(result.stdout, /Implemented Commands:/u);
   assert.match(result.stdout, /Planned Surface \(not implemented yet\):/u);
-  assert.match(result.stdout, /process\s+get \| list \| auto-build/u);
+  assert.match(
+    result.stdout,
+    /process\s+get \| list \| scope-statistics \| dedup-review \| auto-build/u,
+  );
   assert.match(result.stdout, /process\s+auto-build/u);
   assert.match(result.stdout, /lifecyclemodel auto-build/u);
   assert.match(result.stdout, /lifecyclemodel auto-build \| validate-build \| publish-build/u);
@@ -981,6 +984,8 @@ test('executeCli returns help for the process namespace and implemented subcomma
   assert.match(processHelp.stdout, /tiangong process <subcommand>/u);
   assert.match(processHelp.stdout, /get/u);
   assert.match(processHelp.stdout, /list/u);
+  assert.match(processHelp.stdout, /scope-statistics/u);
+  assert.match(processHelp.stdout, /dedup-review/u);
   assert.match(processHelp.stdout, /auto-build/u);
   assert.match(processHelp.stdout, /resume-build/u);
   assert.match(processHelp.stdout, /publish-build/u);
@@ -1000,6 +1005,23 @@ test('executeCli returns help for the process namespace and implemented subcomma
   assert.match(listHelp.stdout, /--page-size/u);
   assert.match(listHelp.stdout, /TIANGONG_LCA_API_BASE_URL/u);
   assert.doesNotMatch(listHelp.stdout, /Planned command/u);
+
+  const scopeStatisticsHelp = await executeCli(
+    ['process', 'scope-statistics', '--help'],
+    makeDeps(),
+  );
+  assert.equal(scopeStatisticsHelp.exitCode, 0);
+  assert.match(scopeStatisticsHelp.stdout, /tiangong process scope-statistics --out-dir <dir>/u);
+  assert.match(scopeStatisticsHelp.stdout, /--state-code/u);
+  assert.match(scopeStatisticsHelp.stdout, /process-scope-statistics\.zh-CN\.md/u);
+  assert.doesNotMatch(scopeStatisticsHelp.stdout, /Planned command/u);
+
+  const dedupReviewHelp = await executeCli(['process', 'dedup-review', '--help'], makeDeps());
+  assert.equal(dedupReviewHelp.exitCode, 0);
+  assert.match(dedupReviewHelp.stdout, /tiangong process dedup-review --input <file>/u);
+  assert.match(dedupReviewHelp.stdout, /--skip-remote/u);
+  assert.match(dedupReviewHelp.stdout, /inputs\/dedup-input\.manifest\.json/u);
+  assert.doesNotMatch(dedupReviewHelp.stdout, /Planned command/u);
 
   const autoBuildHelp = await executeCli(['process', 'auto-build', '--help'], makeDeps());
   assert.equal(autoBuildHelp.exitCode, 0);
@@ -1037,6 +1059,116 @@ test('executeCli returns help for the process namespace and implemented subcomma
   assert.match(batchBuildHelp.stdout, /tiangong process batch-build --input <file>/u);
   assert.match(batchBuildHelp.stdout, /--out-dir/u);
   assert.doesNotMatch(batchBuildHelp.stdout, /Planned command/u);
+});
+
+test('executeCli executes process scope-statistics with injected implementation', async () => {
+  const result = await executeCli(
+    [
+      'process',
+      'scope-statistics',
+      '--json',
+      '--out-dir',
+      './out',
+      '--scope',
+      'current-user',
+      '--state-code',
+      '0',
+      '--state-codes',
+      '100,200',
+      '--page-size',
+      '50',
+      '--reuse-snapshot',
+    ],
+    {
+      ...makeDeps(),
+      runProcessScopeStatisticsImpl: async (options) => {
+        assert.equal(options.outDir, './out');
+        assert.equal(options.scope, 'current-user');
+        assert.deepEqual(options.stateCodes, [0, 100, 200]);
+        assert.equal(options.pageSize, 50);
+        assert.equal(options.reuseSnapshot, true);
+        return {
+          schema_version: 1,
+          generated_at_utc: '2026-04-18T00:00:00.000Z',
+          status: 'completed_process_scope_statistics',
+          out_dir: '/tmp/out',
+          scope: 'current-user',
+          state_codes: [0, 100, 200],
+          total_process_rows: 12,
+          domain_count_primary: 4,
+          domain_count_leaf: 6,
+          craft_count: 7,
+          unit_process_rows: 8,
+          product_count: 9,
+          files: {
+            snapshot_manifest: '/tmp/out/inputs/processes.snapshot.manifest.json',
+            snapshot_rows: '/tmp/out/inputs/processes.snapshot.rows.jsonl',
+            process_scope_summary: '/tmp/out/outputs/process-scope-summary.json',
+            domain_summary: '/tmp/out/outputs/domain-summary.json',
+            craft_summary: '/tmp/out/outputs/craft-summary.json',
+            product_summary: '/tmp/out/outputs/product-summary.json',
+            type_of_dataset_summary: '/tmp/out/outputs/type-of-dataset-summary.json',
+            report: '/tmp/out/reports/process-scope-statistics.md',
+            report_zh: '/tmp/out/reports/process-scope-statistics.zh-CN.md',
+          },
+        };
+      },
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /"status":"completed_process_scope_statistics"/u);
+  assert.match(result.stdout, /"state_codes":\[0,100,200\]/u);
+});
+
+test('executeCli executes process dedup-review with injected implementation', async () => {
+  const result = await executeCli(
+    [
+      'process',
+      'dedup-review',
+      '--json',
+      '--input',
+      './dedup.json',
+      '--out-dir',
+      './artifacts',
+      '--skip-remote',
+    ],
+    {
+      ...makeDeps(),
+      runProcessDedupReviewImpl: async (options) => {
+        assert.equal(options.inputPath, './dedup.json');
+        assert.equal(options.outDir, './artifacts');
+        assert.equal(options.skipRemote, true);
+        return {
+          schema_version: 1,
+          generated_at_utc: '2026-04-18T00:00:00.000Z',
+          status: 'completed_process_dedup_review',
+          input_file: '/tmp/dedup.json',
+          out_dir: '/tmp/artifacts',
+          source_label: 'duplicate-export',
+          group_count: 3,
+          exact_duplicate_group_count: 2,
+          remote_status: {
+            enabled: false,
+            loaded: 0,
+            error: null,
+            reference_scan: 'skipped_by_flag',
+          },
+          files: {
+            input_manifest: '/tmp/artifacts/inputs/dedup-input.manifest.json',
+            remote_metadata: null,
+            duplicate_groups: '/tmp/artifacts/outputs/duplicate-groups.json',
+            delete_plan: '/tmp/artifacts/outputs/delete-plan.json',
+            current_user_reference_scan: null,
+          },
+        };
+      },
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /"status":"completed_process_dedup_review"/u);
+  assert.match(result.stdout, /"reference_scan":"skipped_by_flag"/u);
 });
 
 test('executeCli executes lifecyclemodel build-resulting-process with injected implementation', async () => {
