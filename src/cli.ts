@@ -61,6 +61,11 @@ import {
   type RunProcessScopeStatisticsOptions,
 } from './lib/process-scope-statistics.js';
 import {
+  runProcessRefreshReferences,
+  type ProcessRefreshReferencesReport,
+  type RunProcessRefreshReferencesOptions,
+} from './lib/process-refresh-references.js';
+import {
   runProcessDedupReview,
   type ProcessDedupReviewReport,
   type RunProcessDedupReviewOptions,
@@ -80,6 +85,11 @@ import {
   type ProcessSaveDraftReport,
   type RunProcessSaveDraftOptions,
 } from './lib/process-save-draft-run.js';
+import {
+  runProcessVerifyRows,
+  type ProcessVerifyRowsReport,
+  type RunProcessVerifyRowsOptions,
+} from './lib/process-verify-rows.js';
 import { runPublish, type PublishReport, type RunPublishOptions } from './lib/publish.js';
 import {
   runProcessReview,
@@ -187,6 +197,9 @@ export type CliDeps = {
   runProcessScopeStatisticsImpl?: (
     options: RunProcessScopeStatisticsOptions,
   ) => Promise<ProcessScopeStatisticsReport>;
+  runProcessRefreshReferencesImpl?: (
+    options: RunProcessRefreshReferencesOptions,
+  ) => Promise<ProcessRefreshReferencesReport>;
   runProcessDedupReviewImpl?: (
     options: RunProcessDedupReviewOptions,
   ) => Promise<ProcessDedupReviewReport>;
@@ -199,6 +212,9 @@ export type CliDeps = {
   runProcessSaveDraftImpl?: (
     options: RunProcessSaveDraftOptions,
   ) => Promise<ProcessSaveDraftReport>;
+  runProcessVerifyRowsImpl?: (
+    options: RunProcessVerifyRowsOptions,
+  ) => Promise<ProcessVerifyRowsReport>;
   runProcessReviewImpl?: (options: RunProcessReviewOptions) => Promise<ProcessReviewReport>;
   runFlowReviewImpl?: (options: RunFlowReviewOptions) => Promise<FlowReviewReport>;
   runLifecyclemodelReviewImpl?: (
@@ -266,7 +282,7 @@ Commands:
 Implemented Commands:
   doctor     show environment diagnostics
   search     flow | process | lifecyclemodel
-  process    get | list | scope-statistics | dedup-review | auto-build | resume-build | publish-build | save-draft | batch-build
+  process    get | list | scope-statistics | dedup-review | auto-build | resume-build | publish-build | save-draft | batch-build | refresh-references | verify-rows
   flow       get | list | fetch-rows | materialize-decisions | remediate | publish-version | publish-reviewed-data | build-alias-map | scan-process-flow-refs | plan-process-flow-repairs | apply-process-flow-repairs | regen-product | validate-processes
   lifecyclemodel auto-build | validate-build | publish-build | build-resulting-process | publish-resulting-process | orchestrate
   review     process | flow | lifecyclemodel
@@ -293,6 +309,8 @@ Examples:
   tiangong process publish-build --run-id <id>
   tiangong process save-draft --input ./patched-processes.jsonl --dry-run
   tiangong process batch-build --input ./batch-request.json
+  tiangong process refresh-references --out-dir ./process-refresh --dry-run
+  tiangong process verify-rows --rows-file ./process-list-report.json --out-dir ./process-verify
   tiangong lifecyclemodel auto-build --input ./lifecyclemodel-auto-build.request.json
   tiangong lifecyclemodel validate-build --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id>
   tiangong lifecyclemodel publish-build --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id>
@@ -1172,6 +1190,58 @@ Outputs written under --out-dir:
 `.trim();
 }
 
+function renderProcessRefreshReferencesHelp(): string {
+  return `Usage:
+  tiangong process refresh-references --out-dir <dir> [options]
+
+Options:
+  --out-dir <dir>      Artifact root for manifest, progress, blockers, and reports
+  --apply              Commit state-aware draft writes after local validation passes
+  --dry-run            Refresh references locally only (default)
+  --reuse-manifest     Reuse inputs/processes.manifest.json instead of refetching the owner snapshot
+  --limit <n>          Process at most n manifest rows
+  --page-size <n>      Snapshot page size (default: 500)
+  --concurrency <n>    Parallel row workers (default: 1, max: 8)
+  --json               Print compact JSON
+  -h, --help
+
+Required env:
+  TIANGONG_LCA_API_BASE_URL
+  TIANGONG_LCA_API_KEY
+  TIANGONG_LCA_SUPABASE_PUBLISHABLE_KEY
+
+Guardrails:
+  - refresh only the current authenticated user's process snapshot
+  - skip rows with state_code >= 20 instead of forcing an unsupported write path
+  - block remote writes when ProcessSchema validation fails or references stay unresolved
+  - never requires raw SUPABASE_EMAIL / SUPABASE_PASSWORD in the skill layer
+
+Outputs written under --out-dir:
+  - inputs/processes.manifest.json
+  - outputs/progress.jsonl
+  - outputs/errors.jsonl
+  - outputs/validation-blockers.jsonl
+  - outputs/summary.json
+  - reports/process-refresh-references.md
+`.trim();
+}
+
+function renderProcessVerifyRowsHelp(): string {
+  return `Usage:
+  tiangong process verify-rows --rows-file <file> --out-dir <dir> [options]
+
+Options:
+  --rows-file <file>   Raw process rows JSON/JSONL file; full process list reports with rows[] are also accepted
+  --out-dir <dir>      Output directory for summary and verification JSONL artifacts
+  --json               Print compact JSON
+  -h, --help
+
+Outputs written under --out-dir:
+  - outputs/summary.json
+  - outputs/verification.jsonl
+`.trim();
+}
+
 function renderProcessBatchBuildHelp(): string {
   return `Usage:
   tiangong process batch-build --input <file> [options]
@@ -1198,6 +1268,8 @@ Implemented Subcommands:
   publish-build Prepare publish handoff artifacts from one existing process build run
   save-draft   Save canonical process datasets through the state-aware draft-maintenance path
   batch-build  Run multiple process auto-build requests through one batch-oriented CLI surface
+  refresh-references Refresh current-user process references to the latest reachable dataset versions
+  verify-rows  Re-validate fetched process rows and required naming fields locally
 
 Examples:
   tiangong process --help
@@ -1210,6 +1282,8 @@ Examples:
   tiangong process publish-build --run-id <id> --help
   tiangong process save-draft --input ./patched-processes.jsonl --help
   tiangong process batch-build --input ./batch-request.json --help
+  tiangong process refresh-references --out-dir ./process-refresh --help
+  tiangong process verify-rows --rows-file ./process-list-report.json --out-dir ./process-verify --help
 `.trim();
 }
 
@@ -3215,6 +3289,124 @@ function parseProcessSaveDraftFlags(args: string[]): {
   };
 }
 
+function parseProcessRefreshReferencesFlags(args: string[]): {
+  help: boolean;
+  json: boolean;
+  outDir: string;
+  apply: boolean;
+  reuseManifest: boolean;
+  limit: number | null;
+  pageSize: number | null;
+  concurrency: number | null;
+} {
+  let values: ReturnType<typeof parseArgs>['values'];
+  try {
+    ({ values } = parseArgs({
+      args,
+      allowPositionals: false,
+      strict: true,
+      options: {
+        help: { type: 'boolean', short: 'h' },
+        json: { type: 'boolean' },
+        'out-dir': { type: 'string' },
+        apply: { type: 'boolean' },
+        'dry-run': { type: 'boolean' },
+        'reuse-manifest': { type: 'boolean' },
+        limit: { type: 'string' },
+        'page-size': { type: 'string' },
+        concurrency: { type: 'string' },
+      },
+    }));
+  } catch (error) {
+    throw new CliError(String(error), {
+      code: 'INVALID_ARGS',
+      exitCode: 2,
+    });
+  }
+
+  if (values.apply && values['dry-run']) {
+    throw new CliError('Cannot pass both --apply and --dry-run.', {
+      code: 'PROCESS_REFRESH_MODE_CONFLICT',
+      exitCode: 2,
+    });
+  }
+
+  const parseOptionalPositiveIntegerFlag = (
+    value: unknown,
+    label: string,
+    code: string,
+  ): number | null => {
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new CliError(`Expected ${label} to be a positive integer.`, {
+        code,
+        exitCode: 2,
+      });
+    }
+    return parsed;
+  };
+
+  return {
+    help: Boolean(values.help),
+    json: Boolean(values.json),
+    outDir: typeof values['out-dir'] === 'string' ? values['out-dir'] : '',
+    apply: Boolean(values.apply),
+    reuseManifest: Boolean(values['reuse-manifest']),
+    limit: parseOptionalPositiveIntegerFlag(
+      values.limit,
+      '--limit',
+      'INVALID_PROCESS_REFRESH_LIMIT',
+    ),
+    pageSize: parseOptionalPositiveIntegerFlag(
+      values['page-size'],
+      '--page-size',
+      'INVALID_PROCESS_REFRESH_PAGE_SIZE',
+    ),
+    concurrency: parseOptionalPositiveIntegerFlag(
+      values.concurrency,
+      '--concurrency',
+      'INVALID_PROCESS_REFRESH_CONCURRENCY',
+    ),
+  };
+}
+
+function parseProcessVerifyRowsFlags(args: string[]): {
+  help: boolean;
+  json: boolean;
+  rowsFile: string;
+  outDir: string;
+} {
+  let values: ReturnType<typeof parseArgs>['values'];
+  try {
+    ({ values } = parseArgs({
+      args,
+      allowPositionals: false,
+      strict: true,
+      options: {
+        help: { type: 'boolean', short: 'h' },
+        json: { type: 'boolean' },
+        'rows-file': { type: 'string' },
+        'out-dir': { type: 'string' },
+      },
+    }));
+  } catch (error) {
+    throw new CliError(String(error), {
+      code: 'INVALID_ARGS',
+      exitCode: 2,
+    });
+  }
+
+  return {
+    help: Boolean(values.help),
+    json: Boolean(values.json),
+    rowsFile: typeof values['rows-file'] === 'string' ? values['rows-file'] : '',
+    outDir: typeof values['out-dir'] === 'string' ? values['out-dir'] : '',
+  };
+}
+
 function parseProcessBatchBuildFlags(args: string[]): {
   help: boolean;
   json: boolean;
@@ -3295,10 +3487,13 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
     const processBatchBuildImpl = deps.runProcessBatchBuildImpl ?? runProcessBatchBuild;
     const processScopeStatisticsImpl =
       deps.runProcessScopeStatisticsImpl ?? runProcessScopeStatistics;
+    const processRefreshReferencesImpl =
+      deps.runProcessRefreshReferencesImpl ?? runProcessRefreshReferences;
     const processDedupReviewImpl = deps.runProcessDedupReviewImpl ?? runProcessDedupReview;
     const processResumeBuildImpl = deps.runProcessResumeBuildImpl ?? runProcessResumeBuild;
     const processPublishBuildImpl = deps.runProcessPublishBuildImpl ?? runProcessPublishBuild;
     const processSaveDraftImpl = deps.runProcessSaveDraftImpl ?? runProcessSaveDraft;
+    const processVerifyRowsImpl = deps.runProcessVerifyRowsImpl ?? runProcessVerifyRows;
     const processReviewImpl = deps.runProcessReviewImpl ?? runProcessReview;
     const flowReviewImpl = deps.runFlowReviewImpl ?? runFlowReview;
     const lifecyclemodelReviewImpl = deps.runLifecyclemodelReviewImpl ?? runLifecyclemodelReview;
@@ -3728,6 +3923,56 @@ export async function executeCli(argv: string[], deps: CliDeps): Promise<CliResu
 
       return {
         exitCode: report.status === 'completed_with_failures' ? 1 : 0,
+        stdout: stringifyJson(report, processFlags.json),
+        stderr: '',
+      };
+    }
+
+    if (command === 'process' && subcommand === 'refresh-references') {
+      const processFlags = parseProcessRefreshReferencesFlags(commandArgs);
+      if (processFlags.help) {
+        return {
+          exitCode: 0,
+          stdout: `${renderProcessRefreshReferencesHelp()}\n`,
+          stderr: '',
+        };
+      }
+
+      const report = await processRefreshReferencesImpl({
+        outDir: processFlags.outDir,
+        apply: processFlags.apply,
+        reuseManifest: processFlags.reuseManifest,
+        limit: processFlags.limit,
+        pageSize: processFlags.pageSize,
+        concurrency: processFlags.concurrency,
+        env: deps.env,
+        fetchImpl: deps.fetchImpl,
+      });
+
+      return {
+        exitCode: report.status === 'completed_process_reference_refresh_with_errors' ? 1 : 0,
+        stdout: stringifyJson(report, processFlags.json),
+        stderr: '',
+      };
+    }
+
+    if (command === 'process' && subcommand === 'verify-rows') {
+      const processFlags = parseProcessVerifyRowsFlags(commandArgs);
+      if (processFlags.help) {
+        return {
+          exitCode: 0,
+          stdout: `${renderProcessVerifyRowsHelp()}\n`,
+          stderr: '',
+        };
+      }
+
+      const report = await processVerifyRowsImpl({
+        rowsFile: processFlags.rowsFile,
+        outDir: processFlags.outDir,
+      });
+
+      return {
+        exitCode: report.invalid_count > 0 ? 1 : 0,
         stdout: stringifyJson(report, processFlags.json),
         stderr: '',
       };
