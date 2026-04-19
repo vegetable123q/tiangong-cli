@@ -230,6 +230,26 @@ npm exec tiangong -- admin embedding-run --input ./jobs.json --dry-run
 
 这个命令当前只负责 deterministic direct-read，不负责任何远端写入、review、publish 或 workflow 编排。
 
+`tiangong process list` 现在是统一 CLI 持有的只读 process 列表命令，负责：
+
+- 从 `TIANGONG_LCA_API_BASE_URL` 推导 Supabase `/rest/v1/processes` 读取路径
+- 支持 `--id`、`--version`、`--user-id`、`--state-code` 过滤
+- 支持 `--limit` / `--offset`，以及 `--all --page-size <n>` 的显式分页收集
+- 对远端读取失败做有限重试
+- 输出稳定的结构化 JSON 报告，可直接作为 `tiangong review process --rows-file ...` 的输入
+
+这个命令当前只负责 deterministic direct-read list，不负责治理修复、反向引用追踪或远端写入。
+
+`tiangong process save-draft` 现在已经承担当前账号 draft process 的 state-aware 写入切片，负责：
+
+- 读取 process rows JSON/JSONL 或 publish request 中的 canonical process payload
+- 在本地先执行 `ProcessSchema` 校验，阻断 schema-invalid payload
+- 对精确版本做可见性预检，区分 current-user `state_code=0` draft 与其它可见行
+- 对 current-user draft 走 `cmd_dataset_save_draft`
+- 把 schema-invalid 或执行失败的行写入 `outputs/save-draft-rpc/failures.jsonl`
+
+这个命令当前只负责 current-user draft 的 save-draft/update 语义；它不会替代 public `state_code=100` 的版本修订 publish 路径。
+
 `tiangong process auto-build` 现在已经承担 `process_from_flow` 主链的第一个 CLI 切片，负责：
 
 - 读取单个 process-from-flow request

@@ -25,8 +25,8 @@ checkPaths:
   - src/**
   - test/**
   - scripts/**
-lastReviewedAt: 2026-04-18
-lastReviewedCommit: 8a2184bd17dd796a7f13704a085ffe538605f0fe
+lastReviewedAt: 2026-04-19
+lastReviewedCommit: 6bf15e712cc54c5f06b8c333afc57b91896e3a1f
 related:
   - ../AGENTS.md
   - ./repo.yaml
@@ -55,11 +55,11 @@ When working inside `tiangong-lca-cli`, load docs in this order:
 | Change env loading, session caching, or user API key exchange | `src/lib/dotenv.ts`, `src/lib/env.ts`, `src/lib/user-api-key.ts`, `src/lib/supabase-session.ts`, `src/lib/supabase-client.ts` | `ai/validation.md`, `ai/architecture.md` | Remote auth and session behavior belong here, not in skill wrappers. |
 | Change generic REST or Edge request behavior | `src/lib/http.ts`, `src/lib/remote.ts`, `src/lib/supabase-rest.ts` | `ai/validation.md`, `ai/architecture.md` | If the remote API contract itself changes, coordinate with the owning runtime repo. |
 | Change flow governance, dedupe, or reviewed-data commands | `src/lib/flow-*.ts` | `ai/validation.md`, `ai/architecture.md` | Keep public command semantics and artifact outputs aligned. |
-| Change process review or process build flows | `src/lib/process-*.ts`, `src/lib/review-process.ts` | `ai/validation.md`, `ai/architecture.md` | Use focused tests for the affected process command family. |
+| Change process review or process build flows | `src/lib/process-*.ts`, `src/lib/review-process.ts` | `ai/validation.md`, `ai/architecture.md` | Use focused tests for the affected process command family. `process save-draft`, `scope-statistics`, `dedup-review`, `refresh-references`, and `verify-rows` all stay in this native CLI family. |
 | Change lifecycle model automation or publish flows | `src/lib/lifecyclemodel-*.ts`, `src/lib/publish.ts`, `src/lib/run.ts` | `ai/validation.md`, `ai/architecture.md` | These commands often touch artifact layout and remote orchestration together. |
 | Change local artifact, lockfile, or output path behavior | `src/lib/artifacts.ts`, `src/lib/io.ts`, `src/lib/state-lock.ts` | `ai/validation.md`, `ai/architecture.md` | Preserve file-first usage and deterministic output layout. |
 | Change TIDAS SDK validation inside the CLI | `src/lib/tidas-sdk-package-validator.ts` | `ai/validation.md`, `ai/architecture.md` | If the SDK package contract itself changes, coordinate with `tidas-sdk`. |
-| Change coverage, release tag checks, or protected-branch gates | `scripts/assert-full-coverage.ts`, `scripts/ci/**`, `package.json`, `test/**` | `ai/validation.md` | `npm run prepush:gate` remains the full protected-branch contract. |
+| Change coverage, release tag checks, or protected-branch gates | `scripts/assert-full-coverage.ts`, `scripts/ci/**`, `package.json`, `test/**`, `.github/workflows/**` | `ai/validation.md` | `npm run prepush:gate` remains the full protected-branch contract. Run repo-local `ai-doc-lint` when the gate itself or release workflow rules change. |
 | Add a capability that only exists today in skills wrappers | `tiangong-lca-cli`, then `tiangong-lca-skills` | root `ai/task-router.md` | Add the native CLI command first, then update the skill wrapper repo. |
 | Change MCP transport or inspector behavior | `tiangong-lca-mcp`, not this repo | root `ai/task-router.md` | CLI and MCP are separate surfaces. |
 | Change repo-local AI-doc maintenance only | `AGENTS.md`, `ai/**`, `.github/workflows/ai-doc-lint.yml`, `.github/scripts/ai-doc-lint.*` | `ai/validation.md` when present, otherwise `ai/repo.yaml` | Keep the repo-local maintenance gate aligned with root `ai/ci-lint-spec.md` and `ai/review-matrix.md`. |
@@ -74,6 +74,10 @@ If the public command does not exist yet, add it here first. Skills are wrappers
 ### Weakening the coverage gate to land a feature
 
 Do not bypass `npm run prepush:gate` with coverage ignores. Either test the branch or remove dead code.
+
+### Treating AI bootstrap docs as optional follow-up work
+
+If command-surface or release-gate behavior changes, refresh `AGENTS.md` and the required `ai/*.md` or `ai/*.yaml` docs in the same PR. `ai-doc-lint` enforces this as part of repo-local quality gates.
 
 ### Treating remote runtime drift as a CLI-only problem
 

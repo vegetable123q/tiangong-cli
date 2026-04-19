@@ -58,7 +58,10 @@ test('executeCli prints main help when no command is given', async () => {
   assert.match(result.stdout, /Unified TianGong command entrypoint/u);
   assert.match(result.stdout, /Implemented Commands:/u);
   assert.match(result.stdout, /Planned Surface \(not implemented yet\):/u);
-  assert.match(result.stdout, /process\s+get \| list \| auto-build/u);
+  assert.match(
+    result.stdout,
+    /process\s+get \| list \| scope-statistics \| dedup-review \| auto-build/u,
+  );
   assert.match(result.stdout, /process\s+auto-build/u);
   assert.match(result.stdout, /lifecyclemodel auto-build/u);
   assert.match(result.stdout, /lifecyclemodel auto-build \| validate-build \| publish-build/u);
@@ -982,11 +985,15 @@ test('executeCli returns help for the process namespace and implemented subcomma
   assert.match(processHelp.stdout, /tiangong process <subcommand>/u);
   assert.match(processHelp.stdout, /get/u);
   assert.match(processHelp.stdout, /list/u);
+  assert.match(processHelp.stdout, /scope-statistics/u);
+  assert.match(processHelp.stdout, /dedup-review/u);
   assert.match(processHelp.stdout, /auto-build/u);
   assert.match(processHelp.stdout, /resume-build/u);
   assert.match(processHelp.stdout, /publish-build/u);
   assert.match(processHelp.stdout, /save-draft/u);
   assert.match(processHelp.stdout, /batch-build/u);
+  assert.match(processHelp.stdout, /refresh-references/u);
+  assert.match(processHelp.stdout, /verify-rows/u);
 
   const getHelp = await executeCli(['process', 'get', '--help'], makeDeps());
   assert.equal(getHelp.exitCode, 0);
@@ -1001,6 +1008,23 @@ test('executeCli returns help for the process namespace and implemented subcomma
   assert.match(listHelp.stdout, /--page-size/u);
   assert.match(listHelp.stdout, /TIANGONG_LCA_API_BASE_URL/u);
   assert.doesNotMatch(listHelp.stdout, /Planned command/u);
+
+  const scopeStatisticsHelp = await executeCli(
+    ['process', 'scope-statistics', '--help'],
+    makeDeps(),
+  );
+  assert.equal(scopeStatisticsHelp.exitCode, 0);
+  assert.match(scopeStatisticsHelp.stdout, /tiangong process scope-statistics --out-dir <dir>/u);
+  assert.match(scopeStatisticsHelp.stdout, /--state-code/u);
+  assert.match(scopeStatisticsHelp.stdout, /process-scope-statistics\.zh-CN\.md/u);
+  assert.doesNotMatch(scopeStatisticsHelp.stdout, /Planned command/u);
+
+  const dedupReviewHelp = await executeCli(['process', 'dedup-review', '--help'], makeDeps());
+  assert.equal(dedupReviewHelp.exitCode, 0);
+  assert.match(dedupReviewHelp.stdout, /tiangong process dedup-review --input <file>/u);
+  assert.match(dedupReviewHelp.stdout, /--skip-remote/u);
+  assert.match(dedupReviewHelp.stdout, /inputs\/dedup-input\.manifest\.json/u);
+  assert.doesNotMatch(dedupReviewHelp.stdout, /Planned command/u);
 
   const autoBuildHelp = await executeCli(['process', 'auto-build', '--help'], makeDeps());
   assert.equal(autoBuildHelp.exitCode, 0);
@@ -1028,12 +1052,144 @@ test('executeCli returns help for the process namespace and implemented subcomma
   assert.match(saveDraftHelp.stdout, /outputs\/save-draft-rpc\/summary\.json/u);
   assert.doesNotMatch(saveDraftHelp.stdout, /Planned command/u);
 
+  const refreshReferencesHelp = await executeCli(
+    ['process', 'refresh-references', '--help'],
+    makeDeps(),
+  );
+  assert.equal(refreshReferencesHelp.exitCode, 0);
+  assert.match(
+    refreshReferencesHelp.stdout,
+    /tiangong process refresh-references --out-dir <dir>/u,
+  );
+  assert.match(refreshReferencesHelp.stdout, /--reuse-manifest/u);
+  assert.match(refreshReferencesHelp.stdout, /never requires raw SUPABASE_EMAIL/u);
+  assert.doesNotMatch(refreshReferencesHelp.stdout, /Planned command/u);
+
+  const verifyRowsHelp = await executeCli(['process', 'verify-rows', '--help'], makeDeps());
+  assert.equal(verifyRowsHelp.exitCode, 0);
+  assert.match(
+    verifyRowsHelp.stdout,
+    /tiangong process verify-rows --rows-file <file> --out-dir <dir>/u,
+  );
+  assert.match(verifyRowsHelp.stdout, /outputs\/verification\.jsonl/u);
+  assert.doesNotMatch(verifyRowsHelp.stdout, /Planned command/u);
+
   const batchBuildHelp = await executeCli(['process', 'batch-build', '--help'], makeDeps());
   assert.equal(batchBuildHelp.exitCode, 0);
   assert.match(batchBuildHelp.stdout, /tiangong process batch-build --input <file>/u);
   assert.match(batchBuildHelp.stdout, /request\.out_dir is required/u);
   assert.match(batchBuildHelp.stdout, /--out-dir/u);
   assert.doesNotMatch(batchBuildHelp.stdout, /Planned command/u);
+});
+
+test('executeCli executes process scope-statistics with injected implementation', async () => {
+  const result = await executeCli(
+    [
+      'process',
+      'scope-statistics',
+      '--json',
+      '--out-dir',
+      './out',
+      '--scope',
+      'current-user',
+      '--state-code',
+      '0',
+      '--state-codes',
+      '100,200',
+      '--page-size',
+      '50',
+      '--reuse-snapshot',
+    ],
+    {
+      ...makeDeps(),
+      runProcessScopeStatisticsImpl: async (options) => {
+        assert.equal(options.outDir, './out');
+        assert.equal(options.scope, 'current-user');
+        assert.deepEqual(options.stateCodes, [0, 100, 200]);
+        assert.equal(options.pageSize, 50);
+        assert.equal(options.reuseSnapshot, true);
+        return {
+          schema_version: 1,
+          generated_at_utc: '2026-04-18T00:00:00.000Z',
+          status: 'completed_process_scope_statistics',
+          out_dir: '/tmp/out',
+          scope: 'current-user',
+          state_codes: [0, 100, 200],
+          total_process_rows: 12,
+          domain_count_primary: 4,
+          domain_count_leaf: 6,
+          craft_count: 7,
+          unit_process_rows: 8,
+          product_count: 9,
+          files: {
+            snapshot_manifest: '/tmp/out/inputs/processes.snapshot.manifest.json',
+            snapshot_rows: '/tmp/out/inputs/processes.snapshot.rows.jsonl',
+            process_scope_summary: '/tmp/out/outputs/process-scope-summary.json',
+            domain_summary: '/tmp/out/outputs/domain-summary.json',
+            craft_summary: '/tmp/out/outputs/craft-summary.json',
+            product_summary: '/tmp/out/outputs/product-summary.json',
+            type_of_dataset_summary: '/tmp/out/outputs/type-of-dataset-summary.json',
+            report: '/tmp/out/reports/process-scope-statistics.md',
+            report_zh: '/tmp/out/reports/process-scope-statistics.zh-CN.md',
+          },
+        };
+      },
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /"status":"completed_process_scope_statistics"/u);
+  assert.match(result.stdout, /"state_codes":\[0,100,200\]/u);
+});
+
+test('executeCli executes process dedup-review with injected implementation', async () => {
+  const result = await executeCli(
+    [
+      'process',
+      'dedup-review',
+      '--json',
+      '--input',
+      './dedup.json',
+      '--out-dir',
+      './artifacts',
+      '--skip-remote',
+    ],
+    {
+      ...makeDeps(),
+      runProcessDedupReviewImpl: async (options) => {
+        assert.equal(options.inputPath, './dedup.json');
+        assert.equal(options.outDir, './artifacts');
+        assert.equal(options.skipRemote, true);
+        return {
+          schema_version: 1,
+          generated_at_utc: '2026-04-18T00:00:00.000Z',
+          status: 'completed_process_dedup_review',
+          input_file: '/tmp/dedup.json',
+          out_dir: '/tmp/artifacts',
+          source_label: 'duplicate-export',
+          group_count: 3,
+          exact_duplicate_group_count: 2,
+          remote_status: {
+            enabled: false,
+            loaded: 0,
+            error: null,
+            reference_scan: 'skipped_by_flag',
+          },
+          files: {
+            input_manifest: '/tmp/artifacts/inputs/dedup-input.manifest.json',
+            remote_metadata: null,
+            duplicate_groups: '/tmp/artifacts/outputs/duplicate-groups.json',
+            delete_plan: '/tmp/artifacts/outputs/delete-plan.json',
+            current_user_reference_scan: null,
+          },
+        };
+      },
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /"status":"completed_process_dedup_review"/u);
+  assert.match(result.stdout, /"reference_scan":"skipped_by_flag"/u);
 });
 
 test('executeCli executes lifecyclemodel build-resulting-process with injected implementation', async () => {
@@ -2009,6 +2165,194 @@ test('executeCli rejects conflicting process save-draft mode flags', async () =>
   assert.match(result.stderr, /INVALID_PROCESS_SAVE_DRAFT_MODE/u);
 });
 
+test('executeCli executes process refresh-references with injected implementation', async () => {
+  const result = await executeCli(
+    [
+      'process',
+      'refresh-references',
+      '--json',
+      '--out-dir',
+      './refresh-root',
+      '--apply',
+      '--reuse-manifest',
+      '--limit',
+      '5',
+      '--page-size',
+      '200',
+      '--concurrency',
+      '2',
+    ],
+    {
+      ...makeDeps(),
+      runProcessRefreshReferencesImpl: async (options) => {
+        assert.equal(options.outDir, './refresh-root');
+        assert.equal(options.apply, true);
+        assert.equal(options.reuseManifest, true);
+        assert.equal(options.limit, 5);
+        assert.equal(options.pageSize, 200);
+        assert.equal(options.concurrency, 2);
+        return {
+          schema_version: 1,
+          generated_at_utc: '2026-04-18T10:00:00.000Z',
+          status: 'completed_process_reference_refresh',
+          out_dir: '/tmp/refresh-root',
+          mode: 'apply',
+          user_id: 'user-1',
+          masked_user_email: 'us****@example.com',
+          counts: {
+            manifest: 8,
+            selected: 5,
+            already_completed: 1,
+            pending: 4,
+            saved: 3,
+            dry_run: 0,
+            skipped: 1,
+            validation_blocked: 0,
+            errors: 0,
+          },
+          files: {
+            manifest: '/tmp/refresh-root/inputs/processes.manifest.json',
+            progress_jsonl: '/tmp/refresh-root/outputs/progress.jsonl',
+            errors_jsonl: '/tmp/refresh-root/outputs/errors.jsonl',
+            validation_blockers_jsonl: '/tmp/refresh-root/outputs/validation-blockers.jsonl',
+            summary_json: '/tmp/refresh-root/outputs/summary.json',
+            report_md: '/tmp/refresh-root/reports/process-refresh-references.md',
+          },
+        };
+      },
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /"status":"completed_process_reference_refresh"/u);
+  assert.match(result.stdout, /"saved":3/u);
+});
+
+test('executeCli returns exit code 1 when process refresh-references reports errors', async () => {
+  const result = await executeCli(
+    ['process', 'refresh-references', '--json', '--out-dir', './refresh-root'],
+    {
+      ...makeDeps(),
+      runProcessRefreshReferencesImpl: async () => ({
+        schema_version: 1,
+        generated_at_utc: '2026-04-18T10:02:00.000Z',
+        status: 'completed_process_reference_refresh_with_errors',
+        out_dir: '/tmp/refresh-root',
+        mode: 'dry_run',
+        user_id: 'user-1',
+        masked_user_email: 'us****@example.com',
+        counts: {
+          manifest: 1,
+          selected: 1,
+          already_completed: 0,
+          pending: 1,
+          saved: 0,
+          dry_run: 0,
+          skipped: 0,
+          validation_blocked: 0,
+          errors: 1,
+        },
+        files: {
+          manifest: '/tmp/refresh-root/inputs/processes.manifest.json',
+          progress_jsonl: '/tmp/refresh-root/outputs/progress.jsonl',
+          errors_jsonl: '/tmp/refresh-root/outputs/errors.jsonl',
+          validation_blockers_jsonl: '/tmp/refresh-root/outputs/validation-blockers.jsonl',
+          summary_json: '/tmp/refresh-root/outputs/summary.json',
+          report_md: '/tmp/refresh-root/reports/process-refresh-references.md',
+        },
+      }),
+    },
+  );
+
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stdout, /"errors":1/u);
+});
+
+test('executeCli executes process verify-rows with injected implementation', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-process-verify-rows-cli-'));
+  const rowsFile = path.join(dir, 'rows.json');
+  writeFileSync(rowsFile, '{}\n', 'utf8');
+
+  try {
+    const result = await executeCli(
+      ['process', 'verify-rows', '--json', '--rows-file', rowsFile, '--out-dir', './verify-root'],
+      {
+        ...makeDeps(),
+        runProcessVerifyRowsImpl: async (options) => {
+          assert.equal(options.rowsFile, rowsFile);
+          assert.equal(options.outDir, './verify-root');
+          return {
+            schema_version: 1,
+            generated_at_utc: '2026-04-18T10:05:00.000Z',
+            status: 'completed_with_invalid_process_rows',
+            rows_file: rowsFile,
+            out_dir: path.join(dir, 'verify-root'),
+            row_count: 2,
+            invalid_count: 1,
+            schema_invalid_count: 1,
+            missing_required_name_field_count: 1,
+            invalid_rows: [
+              {
+                id: 'proc-1',
+                version: '01.00.001',
+                row_index: 0,
+                missing_required_fields: ['mixAndLocationTypes'],
+                schema_issue_count: 2,
+              },
+            ],
+            files: {
+              summary_json: path.join(dir, 'verify-root', 'outputs', 'summary.json'),
+              verification_jsonl: path.join(dir, 'verify-root', 'outputs', 'verification.jsonl'),
+            },
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stdout, /"invalid_count":1/u);
+    assert.match(result.stdout, /"status":"completed_with_invalid_process_rows"/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('executeCli returns exit code 0 when process verify-rows finds no invalid rows', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-process-verify-rows-cli-ok-'));
+  const rowsFile = path.join(dir, 'rows.json');
+  writeFileSync(rowsFile, '{}\n', 'utf8');
+
+  try {
+    const result = await executeCli(
+      ['process', 'verify-rows', '--json', '--rows-file', rowsFile, '--out-dir', './verify-root'],
+      {
+        ...makeDeps(),
+        runProcessVerifyRowsImpl: async () => ({
+          schema_version: 1,
+          generated_at_utc: '2026-04-18T10:06:00.000Z',
+          status: 'completed_process_row_verification',
+          rows_file: rowsFile,
+          out_dir: path.join(dir, 'verify-root'),
+          row_count: 1,
+          invalid_count: 0,
+          schema_invalid_count: 0,
+          missing_required_name_field_count: 0,
+          invalid_rows: [],
+          files: {
+            summary_json: path.join(dir, 'verify-root', 'outputs', 'summary.json'),
+            verification_jsonl: path.join(dir, 'verify-root', 'outputs', 'verification.jsonl'),
+          },
+        }),
+      },
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /"status":"completed_process_row_verification"/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('executeCli executes process batch-build with injected implementation', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-process-batch-build-cli-'));
   const inputPath = path.join(dir, 'batch-request.json');
@@ -2564,6 +2908,14 @@ test('executeCli returns parsing errors for invalid lifecyclemodel, process, and
   assert.equal(processResult.stdout, '');
   assert.match(processResult.stderr, /INVALID_ARGS/u);
 
+  const processDedupReviewResult = await executeCli(
+    ['process', 'dedup-review', '--bad-flag'],
+    makeDeps(),
+  );
+  assert.equal(processDedupReviewResult.exitCode, 2);
+  assert.equal(processDedupReviewResult.stdout, '');
+  assert.match(processDedupReviewResult.stderr, /INVALID_ARGS/u);
+
   const processResumeResult = await executeCli(
     ['process', 'resume-build', '--bad-flag'],
     makeDeps(),
@@ -2587,6 +2939,79 @@ test('executeCli returns parsing errors for invalid lifecyclemodel, process, and
   assert.equal(processSaveDraftResult.exitCode, 2);
   assert.equal(processSaveDraftResult.stdout, '');
   assert.match(processSaveDraftResult.stderr, /INVALID_ARGS/u);
+
+  const processRefreshArgsResult = await executeCli(
+    ['process', 'refresh-references', '--bad-flag'],
+    makeDeps(),
+  );
+  assert.equal(processRefreshArgsResult.exitCode, 2);
+  assert.equal(processRefreshArgsResult.stdout, '');
+  assert.match(processRefreshArgsResult.stderr, /INVALID_ARGS/u);
+
+  const processRefreshLimitResult = await executeCli(
+    ['process', 'refresh-references', '--out-dir', './refresh-root', '--limit', '0'],
+    makeDeps(),
+  );
+  assert.equal(processRefreshLimitResult.exitCode, 2);
+  assert.match(processRefreshLimitResult.stderr, /INVALID_PROCESS_REFRESH_LIMIT/u);
+
+  const processRefreshPageSizeResult = await executeCli(
+    ['process', 'refresh-references', '--out-dir', './refresh-root', '--page-size', '0'],
+    makeDeps(),
+  );
+  assert.equal(processRefreshPageSizeResult.exitCode, 2);
+  assert.match(processRefreshPageSizeResult.stderr, /INVALID_PROCESS_REFRESH_PAGE_SIZE/u);
+
+  const processRefreshConcurrencyResult = await executeCli(
+    ['process', 'refresh-references', '--out-dir', './refresh-root', '--concurrency', '0'],
+    makeDeps(),
+  );
+  assert.equal(processRefreshConcurrencyResult.exitCode, 2);
+  assert.match(processRefreshConcurrencyResult.stderr, /INVALID_PROCESS_REFRESH_CONCURRENCY/u);
+
+  const processRefreshModeConflictResult = await executeCli(
+    ['process', 'refresh-references', '--out-dir', './refresh-root', '--apply', '--dry-run'],
+    makeDeps(),
+  );
+  assert.equal(processRefreshModeConflictResult.exitCode, 2);
+  assert.match(processRefreshModeConflictResult.stderr, /PROCESS_REFRESH_MODE_CONFLICT/u);
+
+  const processScopeArgsResult = await executeCli(
+    ['process', 'scope-statistics', '--bad-flag'],
+    makeDeps(),
+  );
+  assert.equal(processScopeArgsResult.exitCode, 2);
+  assert.equal(processScopeArgsResult.stdout, '');
+  assert.match(processScopeArgsResult.stderr, /INVALID_ARGS/u);
+
+  const processScopeStateCodeResult = await executeCli(
+    ['process', 'scope-statistics', '--state-code=-1'],
+    makeDeps(),
+  );
+  assert.equal(processScopeStateCodeResult.exitCode, 2);
+  assert.match(processScopeStateCodeResult.stderr, /INVALID_PROCESS_SCOPE_STATE_CODE/u);
+
+  const processScopePageSizeResult = await executeCli(
+    ['process', 'scope-statistics', '--page-size', '0'],
+    makeDeps(),
+  );
+  assert.equal(processScopePageSizeResult.exitCode, 2);
+  assert.match(processScopePageSizeResult.stderr, /INVALID_PROCESS_SCOPE_PAGE_SIZE/u);
+
+  const processScopeInvalidScopeResult = await executeCli(
+    ['process', 'scope-statistics', '--scope', 'owner'],
+    makeDeps(),
+  );
+  assert.equal(processScopeInvalidScopeResult.exitCode, 2);
+  assert.match(processScopeInvalidScopeResult.stderr, /INVALID_PROCESS_SCOPE_SCOPE/u);
+
+  const processVerifyArgsResult = await executeCli(
+    ['process', 'verify-rows', '--bad-flag'],
+    makeDeps(),
+  );
+  assert.equal(processVerifyArgsResult.exitCode, 2);
+  assert.equal(processVerifyArgsResult.stdout, '');
+  assert.match(processVerifyArgsResult.stderr, /INVALID_ARGS/u);
 
   const processBatchResult = await executeCli(['process', 'batch-build', '--bad-flag'], makeDeps());
   assert.equal(processBatchResult.exitCode, 2);

@@ -22,8 +22,8 @@ checkPaths:
   - src/**
   - test/**
   - scripts/**
-lastReviewedAt: 2026-04-18
-lastReviewedCommit: 8a2184bd17dd796a7f13704a085ffe538605f0fe
+lastReviewedAt: 2026-04-19
+lastReviewedCommit: 6bf15e712cc54c5f06b8c333afc57b91896e3a1f
 related:
   - ../AGENTS.md
   - ./repo.yaml
@@ -88,6 +88,24 @@ The widest feature families currently live in:
 
 These files own the public CLI semantics for those workflows.
 
+### Process maintenance and review commands
+
+Recent process maintenance commands extend the same native CLI layer instead of introducing a secondary orchestration surface:
+
+- `src/lib/process-save-draft-run.ts`
+- `src/lib/process-payload-validation.ts`
+- `src/lib/process-scope-statistics.ts`
+- `src/lib/process-dedup-review.ts`
+- `src/lib/process-refresh-references.ts`
+- `src/lib/process-verify-rows.ts`
+- `src/lib/review-process.ts`
+
+These modules share one contract:
+
+- `src/cli.ts` owns subcommand registration, help, and exit semantics
+- `process save-draft` validates canonical payloads with `ProcessSchema` before remote writes
+- maintenance and review commands still emit artifact-first local outputs and remain covered by the strict `src/**/*.ts` coverage gate
+
 ### Artifact and filesystem behavior
 
 Artifact materialization and local state handling cluster around:
@@ -97,6 +115,21 @@ Artifact materialization and local state handling cluster around:
 - `src/lib/state-lock.ts`
 
 If a task changes output layout, locking, or local run roots, inspect these first.
+
+### Repo-local validation and release gates
+
+Repo-level maintenance gates are now split across:
+
+- `.github/workflows/quality-gate.yml`
+- `.github/workflows/ai-doc-lint.yml`
+- `.github/workflows/tag-release-from-merge.yml`
+- `.github/scripts/ai-doc-lint.*`
+
+Important constraints:
+
+- `npm run prepush:gate` remains the authoritative protected-branch proof for code changes
+- `ai-doc-lint` enforces that command-surface and release-gate changes also refresh the AI bootstrap docs
+- the merge-tag workflow is guarded so only the upstream repository can execute release tagging
 
 ## Cross-Repo Boundaries
 

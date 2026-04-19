@@ -5,6 +5,11 @@ import { CliError } from './errors.js';
 import type { FetchLike } from './http.js';
 import { readJsonInput } from './io.js';
 import {
+  summarizeProcessPayloadValidation,
+  validateProcessPayload,
+  type ProcessPayloadValidationResult,
+} from './process-payload-validation.js';
+import {
   collectPublishInputs,
   normalizePublishRequest,
   type PublishCollectedDatasetEntry,
@@ -186,6 +191,7 @@ export type ProcessSaveDraftCandidate = {
   source: ProcessSaveDraftSource;
   bundle_path: string | null;
   payload: JsonObject;
+  validation?: ProcessPayloadValidationResult;
   error?: { message: string };
 };
 
@@ -195,6 +201,7 @@ export type ProcessSaveDraftProcessReport = {
   source: ProcessSaveDraftSource;
   bundle_path: string | null;
   status: 'prepared' | 'executed' | 'failed';
+  validation?: ProcessPayloadValidationResult;
   execution?: ProcessStateAwareWriteResult;
   error?: { message: string };
 };
@@ -232,6 +239,7 @@ export type RunProcessSaveDraftOptions = {
   fetchImpl?: FetchLike;
   timeoutMs?: number;
   now?: Date;
+  validateProcessPayloadImpl?: (payload: JsonObject) => ProcessPayloadValidationResult;
 };
 
 type PreparedProcessSaveDraftInput = {
@@ -244,15 +252,31 @@ function candidateFromPayload(
   payload: JsonObject,
   source: ProcessSaveDraftSource,
   bundlePath: string | null,
+  validateProcessPayloadImpl: (payload: JsonObject) => ProcessPayloadValidationResult,
 ): ProcessSaveDraftCandidate {
   try {
     const [id, version] = extractProcessIdentity(payload);
+    const validation = validateProcessPayloadImpl(payload);
+    if (!validation.ok) {
+      return {
+        id,
+        version,
+        source,
+        bundle_path: bundlePath,
+        payload,
+        validation,
+        error: {
+          message: summarizeProcessPayloadValidation(validation),
+        },
+      };
+    }
     return {
       id,
       version,
       source,
       bundle_path: bundlePath,
       payload,
+      validation,
     };
   } catch (error) {
     return {
@@ -276,15 +300,23 @@ function sourceFromPublishOrigin(origin: PublishCollectedOrigin): ProcessSaveDra
   return origin.source === 'bundle' ? 'bundle' : 'input';
 }
 
-function candidateFromPublishEntry(entry: PublishCollectedDatasetEntry): ProcessSaveDraftCandidate {
+function candidateFromPublishEntry(
+  entry: PublishCollectedDatasetEntry,
+  validateProcessPayloadImpl: (payload: JsonObject) => ProcessPayloadValidationResult,
+): ProcessSaveDraftCandidate {
   return candidateFromPayload(
     loadProcessPayloadFromDatasetEntry(entry.entry, entry.origin.base_dir),
     sourceFromPublishOrigin(entry.origin),
     entry.origin.bundle_path,
+    validateProcessPayloadImpl,
   );
 }
 
-function prepareRowsFileInput(inputPath: string, rawInput: unknown): PreparedProcessSaveDraftInput {
+function prepareRowsFileInput(
+  inputPath: string,
+  rawInput: unknown,
+  validateProcessPayloadImpl: (payload: JsonObject) => ProcessPayloadValidationResult,
+): PreparedProcessSaveDraftInput {
   const rows = Array.isArray(rawInput) ? rawInput : [rawInput];
   const normalizedRows = rows.map((row, index) => {
     if (!isRecord(row)) {
@@ -307,7 +339,12 @@ function prepareRowsFileInput(inputPath: string, rawInput: unknown): PreparedPro
       row_count: normalizedRows.length,
     },
     processes: normalizedRows.map((row) =>
-      candidateFromPayload(processPayloadFromRow(row), 'rows_file', null),
+      candidateFromPayload(
+        processPayloadFromRow(row),
+        'rows_file',
+        null,
+        validateProcessPayloadImpl,
+      ),
     ),
   };
 }
@@ -317,6 +354,7 @@ function preparePublishRequestInput(
   rawInput: unknown,
   commit: boolean,
   now: Date,
+  validateProcessPayloadImpl: (payload: JsonObject) => ProcessPayloadValidationResult,
 ): PreparedProcessSaveDraftInput {
   const normalized = normalizePublishRequest(rawInput, {
     requestPath: inputPath,
@@ -328,7 +366,9 @@ function preparePublishRequestInput(
   return {
     inputKind: 'publish_request',
     normalizedInput: normalized,
-    processes: collected.processes.map(candidateFromPublishEntry),
+    processes: collected.processes.map((entry) =>
+      candidateFromPublishEntry(entry, validateProcessPayloadImpl),
+    ),
   };
 }
 
@@ -337,10 +377,11 @@ function prepareProcessSaveDraftInput(
   rawInput: unknown,
   commit: boolean,
   now: Date,
+  validateProcessPayloadImpl: (payload: JsonObject) => ProcessPayloadValidationResult,
 ): PreparedProcessSaveDraftInput {
   return looksLikePublishRequest(rawInput)
-    ? preparePublishRequestInput(inputPath, rawInput, commit, now)
-    : prepareRowsFileInput(inputPath, rawInput);
+    ? preparePublishRequestInput(inputPath, rawInput, commit, now, validateProcessPayloadImpl)
+    : prepareRowsFileInput(inputPath, rawInput, validateProcessPayloadImpl);
 }
 
 function defaultOutDir(inputPath: string, commit: boolean, now: Date): string {
@@ -383,6 +424,7 @@ function compactCandidate(candidate: ProcessSaveDraftCandidate): JsonObject {
     source: candidate.source,
     bundle_path: candidate.bundle_path,
     payload: candidate.payload,
+    ...(candidate.validation ? { validation: candidate.validation } : {}),
     ...(candidate.error ? { error: candidate.error } : {}),
   };
 }
@@ -394,7 +436,14 @@ export async function runProcessSaveDraft(
   const inputPath = path.resolve(options.inputPath);
   const commit = options.commit === true;
   const rawInput = options.rawInput ?? readStructuredInput(inputPath);
-  const prepared = prepareProcessSaveDraftInput(inputPath, rawInput, commit, now);
+  const validateProcessPayloadImpl = options.validateProcessPayloadImpl ?? validateProcessPayload;
+  const prepared = prepareProcessSaveDraftInput(
+    inputPath,
+    rawInput,
+    commit,
+    now,
+    validateProcessPayloadImpl,
+  );
   const outDir = resolveOutDir(inputPath, options.outDir, commit, now);
   const files = buildFiles(outDir);
 
@@ -416,6 +465,7 @@ export async function runProcessSaveDraft(
       source: candidate.source,
       bundle_path: candidate.bundle_path,
       status: 'prepared',
+      ...(candidate.validation ? { validation: candidate.validation } : {}),
     };
 
     if (candidate.error) {

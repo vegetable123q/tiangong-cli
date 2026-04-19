@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { CliError } from '../src/lib/errors.js';
+import type { ProcessPayloadValidationResult } from '../src/lib/process-payload-validation.js';
 import { runProcessSaveDraft } from '../src/lib/process-save-draft-run.js';
 import type { FetchLike } from '../src/lib/http.js';
 import {
@@ -11,6 +12,13 @@ import {
   isSupabaseAuthTokenUrl,
   makeSupabaseAuthResponse,
 } from './helpers/supabase-auth.js';
+
+const VALIDATION_OK = (): ProcessPayloadValidationResult => ({
+  ok: true,
+  validator: 'test-validator',
+  issue_count: 0,
+  issues: [],
+});
 
 function writeJson(filePath: string, value: unknown): void {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -103,6 +111,7 @@ test('runProcessSaveDraft produces dry-run artifacts from a rows file', async ()
     const report = await runProcessSaveDraft({
       inputPath,
       now: new Date('2026-04-14T00:00:00.000Z'),
+      validateProcessPayloadImpl: VALIDATION_OK,
     });
 
     assert.equal(report.commit, false);
@@ -161,6 +170,7 @@ test('runProcessSaveDraft extracts processes from publish-request inputs', async
     const report = await runProcessSaveDraft({
       inputPath: requestPath,
       now: new Date('2026-04-14T00:10:00.000Z'),
+      validateProcessPayloadImpl: VALIDATION_OK,
     });
     const normalizedInput = readJson(report.files.normalized_input) as {
       inputs: {
@@ -231,6 +241,7 @@ test('runProcessSaveDraft executes state-aware save-draft writes on commit', asy
         });
       }),
       now: new Date('2026-04-14T00:20:00.000Z'),
+      validateProcessPayloadImpl: VALIDATION_OK,
     });
 
     assert.deepEqual(
@@ -295,6 +306,34 @@ test('runProcessSaveDraft records non-canonical payloads as failed entries', asy
   }
 });
 
+test('runProcessSaveDraft blocks schema-invalid canonical payloads before write planning', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-process-save-draft-schema-invalid-'));
+  const inputPath = path.join(dir, 'patched-processes.jsonl');
+
+  writeJsonl(inputPath, [makeCanonicalProcess('proc-schema-invalid')]);
+
+  try {
+    const report = await runProcessSaveDraft({
+      inputPath,
+      now: new Date('2026-04-14T00:35:00.000Z'),
+    });
+
+    assert.equal(report.status, 'completed_with_failures');
+    assert.deepEqual(report.counts, {
+      selected: 1,
+      prepared: 0,
+      executed: 0,
+      failed: 1,
+    });
+    assert.equal(report.processes[0]?.status, 'failed');
+    assert.match(report.processes[0]?.error?.message ?? '', /ProcessSchema validation failed/u);
+    assert.equal(report.processes[0]?.validation?.ok, false);
+    assert.equal(readJsonl(report.files.failures_jsonl).length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('runProcessSaveDraft validates JSONL inputs before processing', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tg-cli-process-save-draft-jsonl-errors-'));
   const missingPath = path.join(dir, 'missing.jsonl');
@@ -347,6 +386,7 @@ test('runProcessSaveDraft supports publish-request entry variants and validates 
         },
       },
       now: new Date('2026-04-14T00:40:00.000Z'),
+      validateProcessPayloadImpl: VALIDATION_OK,
     });
 
     assert.equal(report.input_kind, 'publish_request');
@@ -418,6 +458,7 @@ test('runProcessSaveDraft accepts single-row raw input and explicit output overr
       inputPath,
       rawInput: makeCanonicalProcess('proc-single-row'),
       now: new Date('2026-04-14T00:45:00.000Z'),
+      validateProcessPayloadImpl: VALIDATION_OK,
     });
 
     assert.equal(singleRowReport.input_kind, 'rows_file');
@@ -435,6 +476,7 @@ test('runProcessSaveDraft accepts single-row raw input and explicit output overr
       },
       outDir: explicitOutDir,
       now: new Date('2026-04-14T00:46:00.000Z'),
+      validateProcessPayloadImpl: VALIDATION_OK,
     });
 
     assert.equal(publishHintReport.input_kind, 'publish_request');
@@ -462,6 +504,7 @@ test('runProcessSaveDraft rejects invalid prepared rows and missing commit runti
         runProcessSaveDraft({
           inputPath,
           rawInput: [1],
+          validateProcessPayloadImpl: VALIDATION_OK,
         }),
       (error) => error instanceof CliError && error.code === 'PROCESS_SAVE_DRAFT_INVALID_ROW',
     );
@@ -472,6 +515,7 @@ test('runProcessSaveDraft rejects invalid prepared rows and missing commit runti
           inputPath,
           commit: true,
           rawInput: [makeCanonicalProcess('proc-runtime-check')],
+          validateProcessPayloadImpl: VALIDATION_OK,
         }),
       (error) => error instanceof CliError && error.code === 'PROCESS_SAVE_DRAFT_RUNTIME_REQUIRED',
     );
@@ -513,6 +557,7 @@ test('runProcessSaveDraft records execution failures and non-canonical extractio
         throw 'rpc exploded';
       }),
       now: new Date('2026-04-14T00:50:00.000Z'),
+      validateProcessPayloadImpl: VALIDATION_OK,
     });
 
     assert.equal(failureReport.status, 'completed_with_failures');
@@ -523,6 +568,7 @@ test('runProcessSaveDraft records execution failures and non-canonical extractio
       inputPath: path.join(dir, 'getter.json'),
       rawInput: [getterExplodes],
       now: new Date('2026-04-14T01:00:00.000Z'),
+      validateProcessPayloadImpl: VALIDATION_OK,
     });
 
     assert.equal(getterReport.status, 'completed_with_failures');

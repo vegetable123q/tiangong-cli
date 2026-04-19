@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "lastReviewedAt": "2026-04-18",
-  "lastReviewedCommit": "8a2184bd17dd796a7f13704a085ffe538605f0fe",
+  "lastReviewedAt": "2026-04-19",
+  "lastReviewedCommit": "6bf15e712cc54c5f06b8c333afc57b91896e3a1f",
   "repo": {
     "id": "cli",
     "path": "tiangong-lca-cli",
@@ -37,7 +37,8 @@
         "npm test",
         "npm run build"
       ],
-      "fullGateCommand": "npm run prepush:gate"
+      "fullGateCommand": "npm run prepush:gate",
+      "aiDocLintCommand": "node .github/scripts/ai-doc-lint.mjs --mode enforce --base <base> --head <head>"
     },
     "sourceOfTruth": {
       "stableManualEditPaths": [
@@ -141,12 +142,28 @@
         ]
       },
       {
+        "topic": "process maintenance and review command surface",
+        "paths": [
+          "src/cli.ts",
+          "src/lib/process-save-draft-run.ts",
+          "src/lib/process-payload-validation.ts",
+          "src/lib/process-scope-statistics.ts",
+          "src/lib/process-dedup-review.ts",
+          "src/lib/process-refresh-references.ts",
+          "src/lib/process-verify-rows.ts",
+          "src/lib/review-process.ts"
+        ]
+      },
+      {
         "topic": "coverage and release gating",
         "paths": [
           "test/**",
           "scripts/assert-full-coverage.ts",
           "scripts/ci/**",
-          "package.json"
+          "package.json",
+          ".github/workflows/tag-release-from-merge.yml",
+          ".github/workflows/ai-doc-lint.yml",
+          ".github/scripts/ai-doc-lint.*"
         ]
       }
     ],
@@ -160,7 +177,9 @@
       "notes": [
         "npm run test:coverage and npm run test:coverage:assert-full are the coverage-specific proofs when code or test behavior changes.",
         "Use npm run test:ci -- <jest-args> for focused suites with extra Jest flags.",
-        "AI-doc changes should still run the repo-local ai-doc-lint workflow or the equivalent local node command."
+        "AI-doc changes should still run the repo-local ai-doc-lint workflow or the equivalent local node command.",
+        "Command-surface, release-gate, or validation-gate changes should refresh AGENTS.md and the ai/*.md or ai/*.yaml bootstrap docs in the same PR.",
+        "The merge-tag workflow is intentionally limited to the upstream repository so forked main branches do not require release secrets."
       ]
     }
   }
