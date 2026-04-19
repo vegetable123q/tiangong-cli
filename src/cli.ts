@@ -302,19 +302,19 @@ Examples:
   tiangong search process --input ./request.json --dry-run
   tiangong process get --id <process-id>
   tiangong process list --state-code 100 --limit 20
-  tiangong process scope-statistics --out-dir ./process-scope --state-code 0 --state-code 100
-  tiangong process dedup-review --input ./duplicate-groups.json --out-dir ./process-dedup
-  tiangong process auto-build --input ./pff-request.json
-  tiangong process resume-build --run-id <id>
-  tiangong process publish-build --run-id <id>
-  tiangong process save-draft --input ./patched-processes.jsonl --dry-run
-  tiangong process batch-build --input ./batch-request.json
-  tiangong process refresh-references --out-dir ./process-refresh --dry-run
-  tiangong process verify-rows --rows-file ./process-list-report.json --out-dir ./process-verify
-  tiangong lifecyclemodel auto-build --input ./lifecyclemodel-auto-build.request.json
-  tiangong lifecyclemodel validate-build --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id>
-  tiangong lifecyclemodel publish-build --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id>
-  tiangong lifecyclemodel orchestrate plan --input ./lifecyclemodel-orchestrate.request.json --out-dir ./artifacts/lifecyclemodel_recursive/run-001
+  tiangong process scope-statistics --out-dir /abs/path/to/process-scope --state-code 0 --state-code 100
+  tiangong process dedup-review --input ./duplicate-groups.json --out-dir /abs/path/to/process-dedup
+  tiangong process auto-build --input ./pff-request.json --out-dir /abs/path/to/process-run
+  tiangong process resume-build --run-dir /abs/path/to/process-run
+  tiangong process publish-build --run-dir /abs/path/to/process-run
+  tiangong process save-draft --input ./patched-processes.jsonl --out-dir /abs/path/to/process-save-draft --dry-run
+  tiangong process batch-build --input ./batch-request.json --out-dir /abs/path/to/process-batch
+  tiangong process refresh-references --out-dir /abs/path/to/process-refresh --dry-run
+  tiangong process verify-rows --rows-file ./process-list-report.json --out-dir /abs/path/to/process-verify
+  tiangong lifecyclemodel auto-build --input ./lifecyclemodel-auto-build.request.json --out-dir /abs/path/to/lifecyclemodel-run
+  tiangong lifecyclemodel validate-build --run-dir /abs/path/to/lifecyclemodel-run
+  tiangong lifecyclemodel publish-build --run-dir /abs/path/to/lifecyclemodel-run
+  tiangong lifecyclemodel orchestrate plan --input ./lifecyclemodel-orchestrate.request.json --out-dir /abs/path/to/lifecyclemodel-recursive-run
   tiangong flow get --id <flow-id> --version <version>
   tiangong flow list --id <flow-id> --state-code 100 --limit 20
   tiangong flow fetch-rows --refs-file ./flow-refs.json --out-dir ./flow-fetch
@@ -329,9 +329,9 @@ Examples:
   tiangong flow regen-product --processes-file ./processes.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-regeneration --apply
   tiangong flow validate-processes --original-processes-file ./before.jsonl --patched-processes-file ./after.jsonl --scope-flow-file ./flows.jsonl --out-dir ./flow-validation
   tiangong review process --rows-file ./processes.jsonl --out-dir ./review
-  tiangong review process --run-root ./artifacts/process_from_flow/<run_id> --run-id <run_id> --out-dir ./review
+  tiangong review process --run-root /abs/path/to/process-run --run-id <run_id> --out-dir ./review
   tiangong review flow --rows-file ./flows.json --out-dir ./review
-  tiangong review lifecyclemodel --run-dir ./artifacts/lifecyclemodel_auto_build/<run_id> --out-dir ./lifecyclemodel-review
+  tiangong review lifecyclemodel --run-dir /abs/path/to/lifecyclemodel-run --out-dir ./lifecyclemodel-review
   tiangong publish run --input ./publish-request.json --dry-run
   tiangong validation run --input-dir ./package --engine auto
   tiangong admin embedding-run --input ./jobs.json
