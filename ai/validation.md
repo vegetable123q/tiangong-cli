@@ -23,8 +23,8 @@ checkPaths:
   - test/**
   - scripts/**
   - .github/workflows/**
-lastReviewedAt: 2026-04-18
-lastReviewedCommit: 8a2184bd17dd796a7f13704a085ffe538605f0fe
+lastReviewedAt: 2026-04-19
+lastReviewedCommit: 6bf15e712cc54c5f06b8c333afc57b91896e3a1f
 related:
   - ../AGENTS.md
   - ./repo.yaml
@@ -49,16 +49,22 @@ For protected-branch parity, the authoritative full gate is:
 npm run prepush:gate
 ```
 
+When command-surface, release-gate, or AI bootstrap docs change, also run the repo-local AI doc maintenance gate:
+
+```bash
+node .github/scripts/ai-doc-lint.mjs --mode enforce --base <base> --head <head>
+```
+
 ## Validation Matrix
 
 | Change type | Minimum local proof | Additional proof when risk is higher | Notes |
 | --- | --- | --- | --- |
 | `bin/**`, `src/main.ts`, or `src/cli.ts` | `npm run lint`; `npm test`; `npm run build` | run the relevant `tiangong --help` or subcommand help path after build | Launcher and dispatch changes affect the public command surface directly. |
 | session, auth, env, or remote adapter helpers under `src/lib/{dotenv,env,user-api-key,supabase-*,remote,http}*` | `npm run lint`; `npm test`; `npm run build` | run focused tests for the touched helper plus one command that exercises the changed path | Record any required live env assumptions in the PR note. |
-| flow, process, lifecyclemodel, review, publish, or run command families | `npm run lint`; `npm test`; `npm run build` | run focused tests for the touched command family; run `npm run test:coverage:assert-full` if the change touched uncovered branches | Preserve the low-entropy command contract and structured artifact outputs. |
+| flow, process, lifecyclemodel, review, publish, or run command families | `npm run lint`; `npm test`; `npm run build` | run focused tests for the touched command family; run `npm run test:coverage:assert-full` if the change touched uncovered branches; prefer `npm run prepush:gate` when the change adds new command paths | Preserve the low-entropy command contract and structured artifact outputs. |
 | artifact, IO, or state-lock behavior | `npm run lint`; `npm test`; `npm run build` | run one representative command path that writes the changed artifact layout, if safe | Path and file layout regressions matter for downstream automation. |
 | `test/**` or coverage gate scripts | `npm run lint`; `npm test`; `npm run test:coverage`; `npm run test:coverage:assert-full` | run `npm run prepush:gate` when the change affects the protected-branch gate directly | Coverage for `src/**/*.ts` is expected to remain at `100%`. |
-| `package.json`, `.nvmrc`, or `scripts/ci/**` | `npm run lint`; `npm test`; `npm run build` | run `npm run prepush:gate` when the change affects release or protected-branch checks | Release-tag checks and dependency baselines change the repo contract. |
+| `package.json`, `.nvmrc`, `scripts/ci/**`, or `.github/workflows/**` | `npm run lint`; `npm test`; `npm run build` | run `npm run prepush:gate`; run repo-local `ai-doc-lint` when the change affects release or documentation gates | Release-tag checks, workflow guards, and dependency baselines change the repo contract. |
 | AI docs only | run repo-local `ai-doc-lint` against touched files or the equivalent local PR check | do one scenario-based routing check from root into this repo | Refresh review metadata even when prose-only docs change. |
 
 ## Coverage Notes
@@ -68,6 +74,8 @@ Facts that matter:
 - `npm run test:coverage` is the full coverage proof
 - `npm run test:coverage:assert-full` verifies the latest coverage artifact without rerunning coverage
 - `npm run prepush:gate` is the exact protected-branch gate
+- `process save-draft` and the newer process maintenance commands are expected to preserve `100%` coverage even when they add schema-validation or fallback branches
+- release-tag and AI-doc lint workflow changes should be described in the PR note when they alter the local or protected-branch proof
 
 If the task changes control flow, add or update tests instead of using coverage-ignore pragmas.
 

@@ -28,8 +28,8 @@ checkPaths:
   - test/**
   - scripts/**
   - .github/workflows/**
-lastReviewedAt: 2026-04-18
-lastReviewedCommit: 8a2184bd17dd796a7f13704a085ffe538605f0fe
+lastReviewedAt: 2026-04-19
+lastReviewedCommit: 6bf15e712cc54c5f06b8c333afc57b91896e3a1f
 related:
   - ai/repo.yaml
   - ai/task-router.md
@@ -87,8 +87,11 @@ Route those tasks to:
 - Package manager: `npm`
 - Node baseline: `>=24 <25`
 - Runtime style: TypeScript source, Node-native CLI, direct REST and Edge Function access only
+- Newly added process-maintenance commands such as `process scope-statistics`, `process dedup-review`, `process refresh-references`, and `process verify-rows` still belong to the native CLI command surface in `src/cli.ts` and `src/lib/process-*.ts`.
+- `process save-draft` now has a local `ProcessSchema` validation gate before any commit path writes remote state.
 - The canonical minimum validation command is `npm run lint`
 - The authoritative full gate is `npm run prepush:gate`
+- Release tagging is guarded in `.github/workflows/tag-release-from-merge.yml` so only the upstream repository can execute the merge-tag flow.
 - Coverage for `src/**/*.ts` is expected to stay at `100%` statements, branches, functions, and lines
 
 ## Hard Boundaries
@@ -96,6 +99,7 @@ Route those tasks to:
 - Do not add orchestration frameworks or new npm dependencies without explicit approval
 - Do not move business logic into skill wrappers when the native `tiangong` CLI should own it
 - Do not weaken the coverage gate with ignore pragmas; cover the branch or remove dead code
+- Do not treat AI bootstrap docs under `ai/**` as optional when command-surface, validation, or release-gate behavior changes; the repo-local `ai-doc-lint` gate is part of the maintained contract.
 - Do not treat a merged repo PR here as workspace-delivery complete if the root repo still needs a submodule bump
 
 ## Workspace Integration
