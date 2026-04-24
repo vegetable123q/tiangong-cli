@@ -1,3 +1,28 @@
+---
+title: CLI Release Setup
+docType: guide
+scope: repo
+status: active
+authoritative: false
+owner: cli
+language: en
+whenToUse:
+  - when configuring repository, token, or npm Trusted Publishing prerequisites for CLI releases
+whenToUpdate:
+  - when release workflow filenames, token names, Trusted Publishing settings, or tag semantics change
+checkPaths:
+  - docs/release-setup.md
+  - .github/workflows/publish.yml
+  - .github/workflows/tag-release-from-merge.yml
+lastReviewedAt: 2026-04-24
+lastReviewedCommit: a9a2a0507ea237b9e64b86ea2f79613c9be57ae5
+related:
+  - ../AGENTS.md
+  - ../.docpact/config.yaml
+  - ./release-runbook.md
+  - ./agents/repo-validation.md
+---
+
 # Release Setup
 
 This document captures the one-time repository and registry configuration required for the `tiangong-lca-cli` npm release workflows.

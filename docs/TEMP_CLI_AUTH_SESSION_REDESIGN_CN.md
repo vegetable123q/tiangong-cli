@@ -1,3 +1,29 @@
+---
+title: CLI Auth Session Redesign RFC
+docType: design
+scope: repo
+status: historical
+authoritative: false
+owner: cli
+language: zh-CN
+whenToUse:
+  - when you need historical context for the CLI API-key-to-session redesign
+whenToUpdate:
+  - only when correcting historical context or explicitly reopening this design record
+checkPaths:
+  - docs/TEMP_CLI_AUTH_SESSION_REDESIGN_CN.md
+  - src/lib/user-api-key.ts
+  - src/lib/supabase-session.ts
+  - src/lib/supabase-client.ts
+lastReviewedAt: 2026-04-24
+lastReviewedCommit: a9a2a0507ea237b9e64b86ea2f79613c9be57ae5
+related:
+  - ../AGENTS.md
+  - ../.docpact/config.yaml
+  - ../DEV_CN.md
+  - ./agents/repo-architecture.md
+---
+
 # CLI 认证与 Session 临时改造方案
 
 更新时间：2026-04-06

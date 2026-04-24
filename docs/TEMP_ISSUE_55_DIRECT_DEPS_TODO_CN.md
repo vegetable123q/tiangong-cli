@@ -1,3 +1,29 @@
+---
+title: Issue 55 Direct Dependencies Historical TODO
+docType: plan
+scope: repo
+status: historical
+authoritative: false
+owner: cli
+language: zh-CN
+whenToUse:
+  - when you need historical context for the Supabase JS and TIDAS SDK dependency migration
+whenToUpdate:
+  - only when correcting historical context or recording the final workspace integration state for that old issue
+checkPaths:
+  - docs/TEMP_ISSUE_55_DIRECT_DEPS_TODO_CN.md
+  - package.json
+  - src/lib/supabase-client.ts
+  - src/lib/tidas-sdk-package-validator.ts
+  - test/**
+lastReviewedAt: 2026-04-24
+lastReviewedCommit: a9a2a0507ea237b9e64b86ea2f79613c9be57ae5
+related:
+  - ../AGENTS.md
+  - ../.docpact/config.yaml
+  - ./SKILLS_TO_CLI_MIGRATION_CHECKLIST_CN.md
+---
+
 # Issue #55 临时执行 TODO
 
 关联记录：

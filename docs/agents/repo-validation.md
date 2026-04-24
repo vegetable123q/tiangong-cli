@@ -15,8 +15,8 @@ whenToUpdate:
   - when change categories require different minimum proof
   - when the protected-branch or coverage contract changes
 checkPaths:
-  - ai/validation.md
-  - ai/task-router.md
+  - docs/agents/repo-validation.md
+  - .docpact/config.yaml
   - package.json
   - bin/**
   - src/**
@@ -26,11 +26,13 @@ checkPaths:
 lastReviewedAt: 2026-04-19
 lastReviewedCommit: 6bf15e712cc54c5f06b8c333afc57b91896e3a1f
 related:
-  - ../AGENTS.md
-  - ./repo.yaml
-  - ./task-router.md
-  - ./architecture.md
-  - ../README.md
+  - ../../AGENTS.md
+  - ../../.docpact/config.yaml
+  - ./repo-architecture.md
+  - ../../README.md
+  - ../../DEV_CN.md
+  - ../release-runbook.md
+  - ../release-setup.md
 ---
 
 ## Default Baseline
@@ -49,10 +51,11 @@ For protected-branch parity, the authoritative full gate is:
 npm run prepush:gate
 ```
 
-When command-surface, release-gate, or AI bootstrap docs change, also run the repo-local AI doc maintenance gate:
+When command-surface, release-gate, or governed docs change, also run the repo-local documentation governance gate:
 
 ```bash
-node .github/scripts/ai-doc-lint.mjs --mode enforce --base <base> --head <head>
+docpact validate-config --root . --strict
+docpact lint --root . --base <base> --head <head> --mode enforce
 ```
 
 ## Validation Matrix
@@ -64,8 +67,8 @@ node .github/scripts/ai-doc-lint.mjs --mode enforce --base <base> --head <head>
 | flow, process, lifecyclemodel, review, publish, or run command families | `npm run lint`; `npm test`; `npm run build` | run focused tests for the touched command family; run `npm run test:coverage:assert-full` if the change touched uncovered branches; prefer `npm run prepush:gate` when the change adds new command paths | Preserve the low-entropy command contract and structured artifact outputs. |
 | artifact, IO, or state-lock behavior | `npm run lint`; `npm test`; `npm run build` | run one representative command path that writes the changed artifact layout, if safe | Path and file layout regressions matter for downstream automation. |
 | `test/**` or coverage gate scripts | `npm run lint`; `npm test`; `npm run test:coverage`; `npm run test:coverage:assert-full` | run `npm run prepush:gate` when the change affects the protected-branch gate directly | Coverage for `src/**/*.ts` is expected to remain at `100%`. |
-| `package.json`, `.nvmrc`, `scripts/ci/**`, or `.github/workflows/**` | `npm run lint`; `npm test`; `npm run build` | run `npm run prepush:gate`; run repo-local `ai-doc-lint` when the change affects release or documentation gates | Release-tag checks, workflow guards, and dependency baselines change the repo contract. |
-| AI docs only | run repo-local `ai-doc-lint` against touched files or the equivalent local PR check | do one scenario-based routing check from root into this repo | Refresh review metadata even when prose-only docs change. |
+| `package.json`, `.nvmrc`, `scripts/ci/**`, or `.github/workflows/**` | `npm run lint`; `npm test`; `npm run build` | run `npm run prepush:gate`; run `docpact lint` when the change affects release or documentation gates | Release-tag checks, workflow guards, and dependency baselines change the repo contract. |
+| governed docs only | `docpact validate-config --root . --strict`; `docpact lint --root . --staged --mode enforce` | run one focused route check, such as `command-surface`, `remote-session`, or `validation-release`, when the change touches routing or release docs | Refresh review metadata even when prose-only docs change. |
 
 ## Coverage Notes
 
@@ -75,7 +78,7 @@ Facts that matter:
 - `npm run test:coverage:assert-full` verifies the latest coverage artifact without rerunning coverage
 - `npm run prepush:gate` is the exact protected-branch gate
 - `process save-draft` and the newer process maintenance commands are expected to preserve `100%` coverage even when they add schema-validation or fallback branches
-- release-tag and AI-doc lint workflow changes should be described in the PR note when they alter the local or protected-branch proof
+- release-tag and docpact lint workflow changes should be described in the PR note when they alter the local or protected-branch proof
 
 If the task changes control flow, add or update tests instead of using coverage-ignore pragmas.
 

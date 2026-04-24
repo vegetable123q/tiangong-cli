@@ -1,3 +1,34 @@
+---
+title: tiangong-lca-cli Maintainer Notes
+docType: guide
+scope: repo
+status: active
+authoritative: false
+owner: cli
+language: zh-CN
+whenToUse:
+  - when you need Chinese maintainer context for CLI runtime, env, release, or development commands
+whenToUpdate:
+  - when maintainer-facing runtime, env, release, or development guidance changes
+checkPaths:
+  - DEV_CN.md
+  - README.md
+  - package.json
+  - .nvmrc
+  - src/**
+  - scripts/**
+  - .github/workflows/**
+lastReviewedAt: 2026-04-24
+lastReviewedCommit: a9a2a0507ea237b9e64b86ea2f79613c9be57ae5
+related:
+  - AGENTS.md
+  - .docpact/config.yaml
+  - README.md
+  - docs/agents/repo-validation.md
+  - docs/agents/repo-architecture.md
+  - docs/IMPLEMENTATION_GUIDE_CN.md
+---
+
 # 项目配置
 
 本项目是 TianGong 的统一 CLI 仓库，运行时基线固定为 Node 24，源码使用 TypeScript，但运行时执行 `dist/` 下的构建产物。

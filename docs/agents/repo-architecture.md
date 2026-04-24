@@ -15,8 +15,8 @@ whenToUpdate:
   - when session or artifact architecture moves
   - when coverage or release gating becomes materially different
 checkPaths:
-  - ai/architecture.md
-  - ai/repo.yaml
+  - docs/agents/repo-architecture.md
+  - .docpact/config.yaml
   - package.json
   - bin/**
   - src/**
@@ -25,11 +25,11 @@ checkPaths:
 lastReviewedAt: 2026-04-19
 lastReviewedCommit: 6bf15e712cc54c5f06b8c333afc57b91896e3a1f
 related:
-  - ../AGENTS.md
-  - ./repo.yaml
-  - ./task-router.md
-  - ./validation.md
-  - ../README.md
+  - ../../AGENTS.md
+  - ../../.docpact/config.yaml
+  - ./repo-validation.md
+  - ../../README.md
+  - ../../DEV_CN.md
 ---
 
 ## Repo Shape
@@ -123,12 +123,12 @@ Repo-level maintenance gates are now split across:
 - `.github/workflows/quality-gate.yml`
 - `.github/workflows/ai-doc-lint.yml`
 - `.github/workflows/tag-release-from-merge.yml`
-- `.github/scripts/ai-doc-lint.*`
 
 Important constraints:
 
 - `npm run prepush:gate` remains the authoritative protected-branch proof for code changes
-- `ai-doc-lint` enforces that command-surface and release-gate changes also refresh the AI bootstrap docs
+- `ai-doc-lint` keeps the historical check identity, but its implementation should run `docpact`
+- `docpact` enforces that command-surface and release-gate changes also refresh or review the governed source docs
 - the merge-tag workflow is guarded so only the upstream repository can execute release tagging
 
 ## Cross-Repo Boundaries

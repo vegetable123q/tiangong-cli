@@ -13,14 +13,14 @@ whenToUse:
 whenToUpdate:
   - when command ownership or repo boundaries change
   - when validation, packaging, or coverage rules change
-  - when the repo-local AI bootstrap docs under ai/ change
+  - when docpact routing, retained source docs, or repo-local governance rules change
 checkPaths:
   - AGENTS.md
   - README.md
   - DEV_CN.md
   - docs/IMPLEMENTATION_GUIDE_CN.md
-  - ai/**/*.md
-  - ai/**/*.yaml
+  - .docpact/config.yaml
+  - docs/agents/**
   - package.json
   - .nvmrc
   - bin/**
@@ -31,31 +31,41 @@ checkPaths:
 lastReviewedAt: 2026-04-19
 lastReviewedCommit: 6bf15e712cc54c5f06b8c333afc57b91896e3a1f
 related:
-  - ai/repo.yaml
-  - ai/task-router.md
-  - ai/validation.md
-  - ai/architecture.md
+  - .docpact/config.yaml
+  - docs/agents/repo-validation.md
+  - docs/agents/repo-architecture.md
   - README.md
+  - DEV_CN.md
   - docs/IMPLEMENTATION_GUIDE_CN.md
+  - docs/release-runbook.md
+  - docs/release-setup.md
 ---
 
 ## Repo Contract
 
 `tiangong-lca-cli` owns the checked-in public `tiangong` CLI contract: command nouns and verbs, launcher behavior, local artifact workflow, remote session/auth handling, and the repo-level release gate. Start here when the task may change what the CLI does or how it is validated.
 
-## AI Load Order
+## Bootstrap Order
 
 Load docs in this order:
 
 1. `AGENTS.md`
-2. `ai/repo.yaml`
-3. `ai/task-router.md`
-4. `ai/validation.md`
-5. `ai/architecture.md`
+2. `.docpact/config.yaml`
+3. `docpact route --root . --intent <intent>` when you need path-specific routing
+4. `docs/agents/repo-validation.md` when proof, coverage, CI, or release gating matters
+5. `docs/agents/repo-architecture.md` when command ownership, session/runtime layers, or artifact families are unclear
 6. `README.md` only for user-facing invocation examples
-7. `docs/IMPLEMENTATION_GUIDE_CN.md` only when you need deeper historical maintainer notes
+7. `DEV_CN.md`, `docs/IMPLEMENTATION_GUIDE_CN.md`, `docs/release-runbook.md`, or `docs/release-setup.md` only when that retained source doc matches the task
 
 Do not start with scattered subcommands or tests before you know which command family owns the task.
+
+Preferred docpact commands:
+
+- `docpact route --root . --intent command-surface`
+- `docpact route --root . --intent remote-session`
+- `docpact route --root . --intent workflow-commands`
+- `docpact route --root . --intent validation-release`
+- `docpact route --root . --intent repo-docs`
 
 ## Repo Ownership
 
@@ -83,7 +93,7 @@ Route those tasks to:
 
 ## Runtime Facts
 
-- Repo-local AI-doc maintenance is enforced by `.github/workflows/ai-doc-lint.yml` using the vendored `.github/scripts/ai-doc-lint.*` files.
+- Repo-local documentation governance is encoded in `.docpact/config.yaml` and enforced by `.github/workflows/ai-doc-lint.yml` through `docpact`.
 - Package manager: `npm`
 - Node baseline: `>=24 <25`
 - Runtime style: TypeScript source, Node-native CLI, direct REST and Edge Function access only
@@ -99,7 +109,7 @@ Route those tasks to:
 - Do not add orchestration frameworks or new npm dependencies without explicit approval
 - Do not move business logic into skill wrappers when the native `tiangong` CLI should own it
 - Do not weaken the coverage gate with ignore pragmas; cover the branch or remove dead code
-- Do not treat AI bootstrap docs under `ai/**` as optional when command-surface, validation, or release-gate behavior changes; the repo-local `ai-doc-lint` gate is part of the maintained contract.
+- Do not treat governed docs as optional when command-surface, validation, or release-gate behavior changes; `docpact` should either require a matching source-doc update or record explicit review evidence.
 - Do not treat a merged repo PR here as workspace-delivery complete if the root repo still needs a submodule bump
 
 ## Workspace Integration

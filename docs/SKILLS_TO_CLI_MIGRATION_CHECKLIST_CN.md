@@ -1,3 +1,31 @@
+---
+title: Skills to CLI Migration Checklist
+docType: audit
+scope: repo
+status: active
+authoritative: false
+owner: cli
+language: zh-CN
+whenToUse:
+  - when auditing historical migration from skills wrappers and legacy runtimes into the native `tiangong` CLI
+whenToUpdate:
+  - when the historical migration conclusion, evidence, or remaining cross-repo notes change
+checkPaths:
+  - docs/SKILLS_TO_CLI_MIGRATION_CHECKLIST_CN.md
+  - README.md
+  - DEV_CN.md
+  - package.json
+  - src/**
+  - test/**
+lastReviewedAt: 2026-04-24
+lastReviewedCommit: a9a2a0507ea237b9e64b86ea2f79613c9be57ae5
+related:
+  - ../AGENTS.md
+  - ../.docpact/config.yaml
+  - ../DEV_CN.md
+  - ./TEMP_ISSUE_55_DIRECT_DEPS_TODO_CN.md
+---
+
 # TianGong Skills -> CLI 迁移清单（审计修订版）
 
 这份文档替代上一版“迁移已全部完成”的口径。
