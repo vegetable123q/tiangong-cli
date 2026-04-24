@@ -1,3 +1,31 @@
+---
+title: TianGong LCA CLI Implementation Guide
+docType: guide
+scope: repo
+status: active
+authoritative: false
+owner: cli
+language: zh-CN
+whenToUse:
+  - when you need deeper historical implementation context for CLI command families, runtime design, or env behavior
+whenToUpdate:
+  - when implemented command families, runtime design conclusions, or maintainer guidance change materially
+checkPaths:
+  - docs/IMPLEMENTATION_GUIDE_CN.md
+  - DEV_CN.md
+  - README.md
+  - src/**
+  - test/**
+lastReviewedAt: 2026-04-24
+lastReviewedCommit: a9a2a0507ea237b9e64b86ea2f79613c9be57ae5
+related:
+  - ../AGENTS.md
+  - ../.docpact/config.yaml
+  - ../DEV_CN.md
+  - ./agents/repo-architecture.md
+  - ./agents/repo-validation.md
+---
+
 # TianGong LCA CLI 实施指南
 
 ## 1. 目标

@@ -1,3 +1,31 @@
+---
+title: CLI Release Runbook
+docType: runbook
+scope: repo
+status: active
+authoritative: false
+owner: cli
+language: en
+whenToUse:
+  - when preparing, verifying, or handing off an `@tiangong-lca/cli` release
+whenToUpdate:
+  - when per-release commands, tag verification, npm verification, or workspace follow-up changes
+checkPaths:
+  - docs/release-runbook.md
+  - docs/release-setup.md
+  - package.json
+  - scripts/ci/**
+  - .github/workflows/publish.yml
+  - .github/workflows/tag-release-from-merge.yml
+lastReviewedAt: 2026-04-24
+lastReviewedCommit: a9a2a0507ea237b9e64b86ea2f79613c9be57ae5
+related:
+  - ../AGENTS.md
+  - ../.docpact/config.yaml
+  - ./release-setup.md
+  - ./agents/repo-validation.md
+---
+
 # CLI Release Runbook
 
 This document is the operator runbook for each `@tiangong-lca/cli` release.

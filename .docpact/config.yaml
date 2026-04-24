@@ -1,0 +1,469 @@
+version: 1
+layout: repo
+lastReviewedAt: 2026-04-24
+lastReviewedCommit: a9a2a0507ea237b9e64b86ea2f79613c9be57ae5
+
+catalog:
+  repos:
+    - id: cli
+      path: .
+      canonicalRepo: tiangong-lca/tiangong-cli
+      entryDoc: AGENTS.md
+      workflowDocs:
+        - docs/agents/repo-validation.md
+        - docs/agents/repo-architecture.md
+        - DEV_CN.md
+        - docs/IMPLEMENTATION_GUIDE_CN.md
+        - docs/release-runbook.md
+        - docs/release-setup.md
+      workspaceIntegrationRequired: true
+
+ownership:
+  domains:
+    - id: repo-governance-and-docs
+      paths:
+        include:
+          - AGENTS.md
+          - README.md
+          - DEV_CN.md
+          - .docpact/config.yaml
+          - docs/agents/**
+          - docs/IMPLEMENTATION_GUIDE_CN.md
+          - docs/SKILLS_TO_CLI_MIGRATION_CHECKLIST_CN.md
+          - docs/TEMP_CLI_AUTH_SESSION_REDESIGN_CN.md
+          - docs/TEMP_ISSUE_55_DIRECT_DEPS_TODO_CN.md
+          - docs/release-runbook.md
+          - docs/release-setup.md
+          - .github/workflows/ai-doc-lint.yml
+      ownerRepo: cli
+    - id: command-surface
+      paths:
+        include:
+          - bin/**
+          - src/main.ts
+          - src/cli.ts
+      ownerRepo: cli
+    - id: command-families-and-runtime
+      paths:
+        include:
+          - src/lib/artifacts.ts
+          - src/lib/dataset-command.ts
+          - src/lib/errors.ts
+          - src/lib/flow-*.ts
+          - src/lib/io.ts
+          - src/lib/lifecyclemodel-*.ts
+          - src/lib/package-version.ts
+          - src/lib/process-*.ts
+          - src/lib/publish.ts
+          - src/lib/review-*.ts
+          - src/lib/run.ts
+          - src/lib/state-lock.ts
+          - src/lib/tidas-sdk-package-validator.ts
+          - src/lib/validation.ts
+      ownerRepo: cli
+    - id: remote-session-and-adapters
+      paths:
+        include:
+          - src/lib/dotenv.ts
+          - src/lib/env.ts
+          - src/lib/http.ts
+          - src/lib/kb-search.ts
+          - src/lib/llm.ts
+          - src/lib/remote.ts
+          - src/lib/supabase-client.ts
+          - src/lib/supabase-json-ordered-write.ts
+          - src/lib/supabase-rest.ts
+          - src/lib/supabase-session.ts
+          - src/lib/unstructured.ts
+          - src/lib/user-api-key.ts
+      ownerRepo: cli
+    - id: tests-release-and-automation
+      paths:
+        include:
+          - package.json
+          - .nvmrc
+          - tsconfig.json
+          - tsconfig.build.json
+          - eslint.config.mjs
+          - test/**
+          - scripts/**
+          - .github/workflows/quality-gate.yml
+          - .github/workflows/publish.yml
+          - .github/workflows/tag-release-from-merge.yml
+      ownerRepo: cli
+
+coverage:
+  include:
+    - AGENTS.md
+    - README.md
+    - DEV_CN.md
+    - .docpact/config.yaml
+    - docs/agents/**
+    - docs/IMPLEMENTATION_GUIDE_CN.md
+    - docs/SKILLS_TO_CLI_MIGRATION_CHECKLIST_CN.md
+    - docs/TEMP_CLI_AUTH_SESSION_REDESIGN_CN.md
+    - docs/TEMP_ISSUE_55_DIRECT_DEPS_TODO_CN.md
+    - docs/release-runbook.md
+    - docs/release-setup.md
+    - package.json
+    - .nvmrc
+    - tsconfig.json
+    - tsconfig.build.json
+    - eslint.config.mjs
+    - bin/**
+    - src/**
+    - test/**
+    - scripts/**
+    - .github/workflows/ai-doc-lint.yml
+    - .github/workflows/quality-gate.yml
+    - .github/workflows/publish.yml
+    - .github/workflows/tag-release-from-merge.yml
+  exclude:
+    - .git/**
+    - .github/scripts/**
+    - .docpact/runs/**
+    - node_modules/**
+    - dist/**
+    - coverage/**
+    - artifacts/**
+    - "*.log"
+    - package-lock.json
+
+freshness:
+  warn_after_commits: 40
+  warn_after_days: 60
+  critical_after_days: 120
+
+routing:
+  intents:
+    command-surface:
+      paths:
+        - bin/**
+        - src/main.ts
+        - src/cli.ts
+        - README.md
+    remote-session:
+      paths:
+        - src/lib/dotenv.ts
+        - src/lib/env.ts
+        - src/lib/http.ts
+        - src/lib/kb-search.ts
+        - src/lib/llm.ts
+        - src/lib/remote.ts
+        - src/lib/supabase-client.ts
+        - src/lib/supabase-json-ordered-write.ts
+        - src/lib/supabase-rest.ts
+        - src/lib/supabase-session.ts
+        - src/lib/unstructured.ts
+        - src/lib/user-api-key.ts
+        - docs/TEMP_CLI_AUTH_SESSION_REDESIGN_CN.md
+    workflow-commands:
+      paths:
+        - src/lib/artifacts.ts
+        - src/lib/dataset-command.ts
+        - src/lib/errors.ts
+        - src/lib/flow-*.ts
+        - src/lib/io.ts
+        - src/lib/lifecyclemodel-*.ts
+        - src/lib/package-version.ts
+        - src/lib/process-*.ts
+        - src/lib/publish.ts
+        - src/lib/review-*.ts
+        - src/lib/run.ts
+        - src/lib/state-lock.ts
+        - docs/IMPLEMENTATION_GUIDE_CN.md
+    tidas-sdk-validation:
+      paths:
+        - src/lib/tidas-sdk-package-validator.ts
+        - src/lib/validation.ts
+        - test/fixtures/tidas-sdk/**
+        - docs/TEMP_ISSUE_55_DIRECT_DEPS_TODO_CN.md
+    validation-release:
+      paths:
+        - package.json
+        - .nvmrc
+        - tsconfig.json
+        - tsconfig.build.json
+        - eslint.config.mjs
+        - test/**
+        - scripts/**
+        - .github/workflows/quality-gate.yml
+        - .github/workflows/publish.yml
+        - .github/workflows/tag-release-from-merge.yml
+        - docs/release-runbook.md
+        - docs/release-setup.md
+    skills-handoff:
+      paths:
+        - docs/SKILLS_TO_CLI_MIGRATION_CHECKLIST_CN.md
+        - README.md
+    proof:
+      paths:
+        - docs/agents/repo-validation.md
+        - package.json
+        - .nvmrc
+        - bin/**
+        - src/**
+        - test/**
+        - scripts/**
+        - .github/workflows/quality-gate.yml
+        - .github/workflows/publish.yml
+        - .github/workflows/tag-release-from-merge.yml
+    repo-docs:
+      paths:
+        - AGENTS.md
+        - README.md
+        - DEV_CN.md
+        - .docpact/config.yaml
+        - docs/agents/**
+        - docs/*.md
+    root-integration:
+      paths:
+        - AGENTS.md
+        - docs/release-runbook.md
+
+docInventory:
+  include:
+    - AGENTS.md
+    - README.md
+    - DEV_CN.md
+    - .docpact/config.yaml
+    - docs/agents/repo-validation.md
+    - docs/agents/repo-architecture.md
+    - docs/IMPLEMENTATION_GUIDE_CN.md
+    - docs/SKILLS_TO_CLI_MIGRATION_CHECKLIST_CN.md
+    - docs/TEMP_CLI_AUTH_SESSION_REDESIGN_CN.md
+    - docs/TEMP_ISSUE_55_DIRECT_DEPS_TODO_CN.md
+    - docs/release-runbook.md
+    - docs/release-setup.md
+
+repo:
+  id: cli
+  owner: cli
+
+rules:
+  - id: cli-bootstrap-contract
+    scope: repo
+    repo: cli
+    triggers:
+      - path: AGENTS.md
+        kind: doc-contract
+      - path: .docpact/config.yaml
+        kind: doc-governance-layer
+      - path: docs/agents/repo-validation.md
+        kind: deep-doc
+      - path: docs/agents/repo-architecture.md
+        kind: deep-doc
+    requiredDocs:
+      - path: AGENTS.md
+        mode: review_or_update
+      - path: .docpact/config.yaml
+        mode: review_or_update
+      - path: docs/agents/repo-validation.md
+        mode: review_or_update
+      - path: docs/agents/repo-architecture.md
+        mode: review_or_update
+    reason: Repo entry guidance, machine-readable routing, and retained CLI source docs must stay aligned.
+  - id: cli-readme-contract
+    scope: repo
+    repo: cli
+    triggers:
+      - path: README.md
+        kind: repo-landing
+    requiredDocs:
+      - path: AGENTS.md
+        mode: review_or_update
+      - path: README.md
+        mode: review_or_update
+      - path: .docpact/config.yaml
+        mode: review_or_update
+    reason: User-facing CLI invocation docs should stay aligned with the current public command and package surface.
+  - id: cli-maintainer-docs-contract
+    scope: repo
+    repo: cli
+    triggers:
+      - path: DEV_CN.md
+        kind: maintainer-doc
+      - path: docs/IMPLEMENTATION_GUIDE_CN.md
+        kind: implementation-guide
+      - path: docs/SKILLS_TO_CLI_MIGRATION_CHECKLIST_CN.md
+        kind: historical-audit
+      - path: docs/TEMP_CLI_AUTH_SESSION_REDESIGN_CN.md
+        kind: historical-design
+      - path: docs/TEMP_ISSUE_55_DIRECT_DEPS_TODO_CN.md
+        kind: historical-todo
+    requiredDocs:
+      - path: AGENTS.md
+        mode: review_or_update
+      - path: .docpact/config.yaml
+        mode: review_or_update
+      - path: DEV_CN.md
+        mode: review_or_update
+      - path: docs/IMPLEMENTATION_GUIDE_CN.md
+        mode: review_or_update
+      - path: docs/SKILLS_TO_CLI_MIGRATION_CHECKLIST_CN.md
+        mode: review_or_update
+      - path: docs/TEMP_CLI_AUTH_SESSION_REDESIGN_CN.md
+        mode: review_or_update
+      - path: docs/TEMP_ISSUE_55_DIRECT_DEPS_TODO_CN.md
+        mode: review_or_update
+    reason: Maintainer and historical docs should preserve context without becoming duplicate routing or rule sources.
+  - id: cli-command-surface-contract
+    scope: repo
+    repo: cli
+    triggers:
+      - path: bin/**
+        kind: launcher
+      - path: src/main.ts
+        kind: process-entry
+      - path: src/cli.ts
+        kind: command-router
+    requiredDocs:
+      - path: AGENTS.md
+        mode: review_or_update
+      - path: .docpact/config.yaml
+        mode: review_or_update
+      - path: docs/agents/repo-validation.md
+        mode: review_or_update
+      - path: docs/agents/repo-architecture.md
+        mode: review_or_update
+      - path: README.md
+        mode: review_or_update
+    reason: Launcher, help, exit, and command registration changes alter the public CLI contract.
+  - id: cli-command-family-contract
+    scope: repo
+    repo: cli
+    triggers:
+      - path: src/lib/artifacts.ts
+        kind: artifact-runtime
+      - path: src/lib/dataset-command.ts
+        kind: command-logic
+      - path: src/lib/errors.ts
+        kind: shared-runtime
+      - path: src/lib/flow-*.ts
+        kind: command-logic
+      - path: src/lib/io.ts
+        kind: shared-runtime
+      - path: src/lib/lifecyclemodel-*.ts
+        kind: command-logic
+      - path: src/lib/package-version.ts
+        kind: package-runtime
+      - path: src/lib/process-*.ts
+        kind: command-logic
+      - path: src/lib/publish.ts
+        kind: command-logic
+      - path: src/lib/review-*.ts
+        kind: command-logic
+      - path: src/lib/run.ts
+        kind: command-logic
+      - path: src/lib/state-lock.ts
+        kind: artifact-runtime
+      - path: src/lib/tidas-sdk-package-validator.ts
+        kind: validation-runtime
+      - path: src/lib/validation.ts
+        kind: validation-runtime
+    requiredDocs:
+      - path: AGENTS.md
+        mode: review_or_update
+      - path: .docpact/config.yaml
+        mode: review_or_update
+      - path: docs/agents/repo-validation.md
+        mode: review_or_update
+      - path: docs/agents/repo-architecture.md
+        mode: review_or_update
+      - path: docs/IMPLEMENTATION_GUIDE_CN.md
+        mode: review_or_update
+    reason: Command-family implementation changes affect public command behavior, artifact layout, and validation guidance.
+  - id: cli-remote-session-contract
+    scope: repo
+    repo: cli
+    triggers:
+      - path: src/lib/dotenv.ts
+        kind: env-loading
+      - path: src/lib/env.ts
+        kind: env-contract
+      - path: src/lib/http.ts
+        kind: transport
+      - path: src/lib/kb-search.ts
+        kind: remote-adapter
+      - path: src/lib/llm.ts
+        kind: remote-adapter
+      - path: src/lib/remote.ts
+        kind: remote-adapter
+      - path: src/lib/supabase-client.ts
+        kind: remote-adapter
+      - path: src/lib/supabase-json-ordered-write.ts
+        kind: remote-adapter
+      - path: src/lib/supabase-rest.ts
+        kind: remote-adapter
+      - path: src/lib/supabase-session.ts
+        kind: session-runtime
+      - path: src/lib/unstructured.ts
+        kind: remote-adapter
+      - path: src/lib/user-api-key.ts
+        kind: auth-runtime
+    requiredDocs:
+      - path: AGENTS.md
+        mode: review_or_update
+      - path: .docpact/config.yaml
+        mode: review_or_update
+      - path: docs/agents/repo-validation.md
+        mode: review_or_update
+      - path: docs/agents/repo-architecture.md
+        mode: review_or_update
+      - path: DEV_CN.md
+        mode: review_or_update
+    reason: Session, env, and remote adapter changes alter the CLI-owned runtime boundary and proof assumptions.
+  - id: cli-validation-and-release-contract
+    scope: repo
+    repo: cli
+    triggers:
+      - path: package.json
+        kind: runtime-config
+      - path: .nvmrc
+        kind: runtime-config
+      - path: tsconfig.json
+        kind: runtime-config
+      - path: tsconfig.build.json
+        kind: runtime-config
+      - path: eslint.config.mjs
+        kind: runtime-config
+      - path: test/**
+        kind: repo-test
+      - path: scripts/**
+        kind: validation-or-release-script
+      - path: .github/workflows/quality-gate.yml
+        kind: ci
+      - path: .github/workflows/publish.yml
+        kind: ci
+      - path: .github/workflows/tag-release-from-merge.yml
+        kind: ci
+      - path: docs/release-runbook.md
+        kind: release-runbook
+      - path: docs/release-setup.md
+        kind: release-setup
+    requiredDocs:
+      - path: AGENTS.md
+        mode: review_or_update
+      - path: .docpact/config.yaml
+        mode: review_or_update
+      - path: docs/agents/repo-validation.md
+        mode: review_or_update
+      - path: docs/release-runbook.md
+        mode: review_or_update
+      - path: docs/release-setup.md
+        mode: review_or_update
+    reason: Runtime baselines, coverage gates, release checks, and publish workflows define how CLI changes are validated and shipped.
+  - id: cli-doc-maintenance-contract
+    scope: repo
+    repo: cli
+    triggers:
+      - path: .github/workflows/ai-doc-lint.yml
+        kind: automation
+    requiredDocs:
+      - path: AGENTS.md
+        mode: review_or_update
+      - path: .docpact/config.yaml
+        mode: review_or_update
+      - path: docs/agents/repo-validation.md
+        mode: review_or_update
+    reason: Repo-local documentation maintenance automation must stay aligned with the repo contract and governed-doc rules.

@@ -7,3 +7,4 @@ dist/
 .eslintcache
 package-lock.json
 artifacts/
+.docpact/runs/
